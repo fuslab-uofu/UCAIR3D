@@ -1,0 +1,9 @@
+myStuff/
+.pytest_cache/
+__pychache__/
+src/__pychache__/
+venv/
+env/
+*.pyc
+.idea/
+*.pptx
