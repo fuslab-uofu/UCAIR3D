@@ -35,6 +35,10 @@ class Viewport(QFrame):
 
     Major methods
     -------------
+    - on_mouse_press: slot for the signal sent when the user clicks anywhere in a viewport.
+    - on_mouse_move: slot for the signal sent when the user moves the mouse over a viewport.
+    - on_mouse_release: slot for the signal sent when the user releases the mouse button.
+    - on_scroll: slot for the signal sent when the user scrolls the mouse wheel over a viewport.
     """
 
     def __init__(self, parent, id, view_dir_, num_vols, coords_outside_, zoom_method_, pan_method_):
@@ -45,14 +49,14 @@ class Viewport(QFrame):
         self.id = id
         self.view_dir = view_dir_.dir  # ViewDir.AX, ViewDir.SAG, ViewDir.COR
 
-        # reference to the volume(s) being displayed in viewport
+        # list of references to the volume(s) being displayed in viewport
         self.volume_stack = [None] * num_vols
-
+        # MMK FIXME: maybe no need to store the slice_stack, just the layer_stack
         # the actual 2D slice of data
         self.slice_stack = [None] * num_vols
 
-        # the handle to the imshow plot object
-        self.plot_object = [None] * num_vols
+        # list of Matplotlib imshow plot objects being displayed in the viewport
+        self.layer_stack = [None] * num_vols
 
         # for controlling slice scrolling
         self.current_display_index = 0  # in this context, can refer to row slice, col slice, or slice slice (lol )
@@ -66,7 +70,7 @@ class Viewport(QFrame):
         self.ax.set_facecolor("black")
 
         # hide ticks and tick labels
-        plt.axis('off')
+        self.ax.axis('off')
         self.canvas = FigureCanvas(self.fig)
 
         self.main_layout = QVBoxLayout(self)
@@ -114,7 +118,8 @@ class Viewport(QFrame):
         self.cid_release = self.canvas.mpl_connect('button_release_event', self.on_mouse_release)
         self.cid_scroll = self.canvas.mpl_connect('scroll_event', self.on_scroll)
 
-    def update_volume(self, new_volume, stack_position):
+    def update_volume_stack(self, new_volume, stack_position):
+        """ Update the volume stack with a new volume in the specified position. """
         self.volume_stack[stack_position] = new_volume
 
         if new_volume is not None:
@@ -142,11 +147,13 @@ class Viewport(QFrame):
     def refresh_plot(self, extent=None):
         """ This is called each time anything about the viewport is changed (current slice, colormap, etc.).
         """
+        # clear the plot each time, so that plot objects don't accumulate
         self.ax.cla()
 
         for ind, vol in enumerate(self.volume_stack):
             if vol is not None:
-                self.slice_stack[ind] = vol.get_slice(self.view_dir, self.current_display_index)
+                # TODO: try catch for None returned from get_slice
+                self.slice_stack[ind] = vol.get_slice(self.view_dir, self.current_display_index)  # FIXME: need to store?
 
                 # to account for non-isotropic voxel dimensions, set aspect ratio
                 if self.view_dir == ViewDir.AX.dir:
@@ -157,16 +164,16 @@ class Viewport(QFrame):
                     ratio = vol.dz / vol.dy
 
                 # need to transpose to make the first axes left-right and second axes up-down
-                self.plot_object[ind] = self.ax.imshow(self.slice_stack[ind].T, origin="lower", aspect=ratio,
+                self.layer_stack[ind] = self.ax.imshow(self.slice_stack[ind].T, origin="lower", aspect=ratio,
                                                        cmap=vol.colormap, alpha=vol.alpha, vmin=vol.display_min,
                                                        vmax=vol.display_max, interpolation=vol.interpolation)
                 # this makes values outside the range of the colormap transparent. otherwise, they are the min or max
                 # color of the colormap
                 if vol.clipping:
-                    self.plot_object[ind].cmap.set_over((0, 0, 0, 0))
-                    self.plot_object[ind].cmap.set_under((0, 0, 0, 0))
+                    self.layer_stack[ind].cmap.set_over((0, 0, 0, 0))
+                    self.layer_stack[ind].cmap.set_under((0, 0, 0, 0))
 
-                self.plot_object[ind].format_cursor_data = lambda z: f'{int(z):d}'
+                self.layer_stack[ind].format_cursor_data = lambda z: f'{int(z):d}'
 
                 # set extent
                 # print(self.initial_extent)
@@ -186,8 +193,8 @@ class Viewport(QFrame):
 
                 # cursor data is the actual value of the voxel that the cursor is currently over.
                 # the matplotlib navigation toolbar displays this by default. format it to be integer
-                # if self.plot_object[[ind] is not None:
-                #     self.plot_object[ind].format_cursor_data = lambda z: f'{int(z):d}'
+                # if self.layer_stack[[ind] is not None:
+                #     self.layer_stack[ind].format_cursor_data = lambda z: f'{int(z):d}'
 
                 self.canvas.draw()  # necessary
 
@@ -200,7 +207,7 @@ class Viewport(QFrame):
             and shift, control, or alt modifiers.
         """
         # no slices currently displayed, do nothing
-        if all(obj is None for obj in self.plot_object):
+        if all(obj is None for obj in self.layer_stack):
             return
 
         self.mouse_x = event.x
@@ -238,7 +245,7 @@ class Viewport(QFrame):
               if zooming, the axes are zoomed in or out based on mouse movement up/down
               if panning, the axes are moved based on mouse movement up/down/left/right
         """
-        if all(obj is None for obj in self.plot_object):
+        if all(obj is None for obj in self.layer_stack):
             # no slices currently displayed, do nothing
             return
 
@@ -338,7 +345,7 @@ class Viewport(QFrame):
         -------
         """
         # no slices currently displayed, do nothing
-        if all(obj is None for obj in self.plot_object):
+        if all(obj is None for obj in self.layer_stack):
             return
 
         if event.button == "up":

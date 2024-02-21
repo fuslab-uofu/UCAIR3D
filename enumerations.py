@@ -1,4 +1,8 @@
-"""
+""" enumerations.py
+Part of the SPRITE package, a Simple Python Radiological Image viewing Tool
+Author: Michelle Kline, UCAIR, University of Utah Department of Radiology and Imaging Sciences, 2023-2024
+
+This module simply defines enumerations used in the SPRITE package.
 """
 
 from enum import Enum
