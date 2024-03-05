@@ -74,7 +74,7 @@ class Viewport(QFrame):
         self.canvas = FigureCanvas(self.fig)
 
         self.main_layout = QVBoxLayout(self)
-        # main_layout.setContentsMargins(5, 5, 5, 5)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.addWidget(self.canvas)
 
         self.coords_outside = coords_outside_
@@ -83,12 +83,17 @@ class Viewport(QFrame):
             self.coords_label = QLabel()
             self.coords_label.setMinimumWidth(200)
             self.coords_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.coords_label.setObjectName("coords_label")
+            self.coords_label.setStyleSheet("#coords_label {background-color: black;}")
             self.main_layout.addWidget(self.coords_label)
         else:
             self.coords_obj = self.fig.text(0.55, 0.04, '', fontsize=8, color='white')
 
         self.setLayout(self.main_layout)
-        self.setStyleSheet("QFrame#ViewPort {border: 1px solid gray;}")
+
+        self.setObjectName("Viewport")
+        self.setStyleSheet("#Viewport {border: 1px solid gray; background-color: black;}")
+
         # coordinates and cursor data text
         self.direction_chars = view_dir_.chars
         self.voxel_coords = None
