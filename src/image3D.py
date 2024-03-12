@@ -120,6 +120,9 @@ class Image3D:
         self.y_dir = ax_codes[1]  # 'A' or 'P'
         self.z_dir = ax_codes[2]  # 'S' or 'I'
 
+        self.data_min = np.min(self.data)
+        self.data_max = np.max(self.data)
+
     def get_slice(self, view, slice_num):
         """
         Parameters

@@ -41,7 +41,8 @@ class Viewport(QFrame):
     - on_scroll: slot for the signal sent when the user scrolls the mouse wheel over a viewport.
     """
 
-    def __init__(self, parent, id, view_dir_, num_vols, coords_outside_, zoom_method_, pan_method_):
+    def __init__(self, parent, id, view_dir_, num_vols, coords_outside_, zoom_method_, pan_method_,
+                 window_method_=None):
         super(Viewport, self).__init__(parent)
 
         # identifying info
@@ -51,15 +52,13 @@ class Viewport(QFrame):
 
         # list of references to the volume(s) being displayed in viewport
         self.volume_stack = [None] * num_vols
-        # MMK FIXME: maybe no need to store the slice_stack, just the layer_stack
         # the actual 2D slice of data
         self.slice_stack = [None] * num_vols
-
         # list of Matplotlib imshow plot objects being displayed in the viewport
         self.layer_stack = [None] * num_vols
 
         # for controlling slice scrolling
-        self.current_display_index = 0  # in this context, can refer to row slice, col slice, or slice slice (lol )
+        self.current_display_index = 0  # in this context, can refer to row slice, col slice, or "slice slice" (lol )
         self.max_display_index = 0
 
         # create a Matplotlib figure and canvas
@@ -68,6 +67,10 @@ class Viewport(QFrame):
         self.fig.subplots_adjust(bottom=0.25)
         self.fig.set_facecolor("black")
         self.ax.set_facecolor("black")
+
+        # optionally display a crosshair showing cursor position
+        self.show_crosshair = False
+        self.crosshair = None
 
         # hide ticks and tick labels
         self.ax.axis('off')
@@ -106,6 +109,7 @@ class Viewport(QFrame):
         self.fig.text(0.50, 0.04, self.direction_chars[2], fontsize=8, color='white')
         self.fig.text(0.04, 0.50, self.direction_chars[3], fontsize=8, color='white')
 
+        # for interactive windowing
         self.mouse_x = 0
         self.mouse_y = 0
 
@@ -113,6 +117,7 @@ class Viewport(QFrame):
         self.status = "idle"
         self.zoom_method = zoom_method_
         self.pan_method = pan_method_
+        self.window_method = window_method_
 
         # for syncronizing and resetting zoom and pan
         self.initial_extent = None
@@ -158,7 +163,7 @@ class Viewport(QFrame):
         for ind, vol in enumerate(self.volume_stack):
             if vol is not None:
                 # TODO: try catch for None returned from get_slice
-                self.slice_stack[ind] = vol.get_slice(self.view_dir, self.current_display_index)  # FIXME: need to store?
+                self.slice_stack[ind] = vol.get_slice(self.view_dir, self.current_display_index)
 
                 # to account for non-isotropic voxel dimensions, set aspect ratio
                 if self.view_dir == ViewDir.AX.dir:
@@ -242,6 +247,13 @@ class Viewport(QFrame):
                     self.status = "panning"
                     return
 
+        # are we windowing?
+        if self.window_method is not None and button == self.window_method.button:
+            if len(modifiers) > 0:
+                if self.window_method.modifier in modifiers:
+                    self.status = "windowing"
+                    return
+
     def on_mouse_move(self, event):
         """ Slot for the signal sent when the user moves the mouse over a viewport.
             Resulting action depends on current viewport status (zooming, panning, idle).
@@ -292,6 +304,9 @@ class Viewport(QFrame):
             self.canvas.draw()  # necessary
 
             self.parent.sync_extents(self.id, zoom_factor)
+        elif self.status == "windowing":
+            # let derived class handle this
+            return
         else:
             if event.inaxes is None:
                 # the cursor is outside the axes
@@ -302,6 +317,11 @@ class Viewport(QFrame):
 
                 self.canvas.draw()  # necessary
                 return
+
+            if self.show_crosshair:
+                if self.crosshair:
+                    self.crosshair.remove()
+                self.crosshair = self.ax.plot([event.x, event.x], [0, self.ax.get_ylim()[1]], color='red')[0]
 
             vol_indices = [index for index, item in enumerate(self.volume_stack) if item is not None]
             if len(vol_indices) == 0:
