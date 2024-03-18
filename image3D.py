@@ -31,6 +31,8 @@ class Image3D:
         self.data = None
         self.canonical_data = None
 
+        self.data_type = None
+
         # geometry and stats
         self.dx = 1
         self.dy = 1
@@ -100,6 +102,7 @@ class Image3D:
         # the voxel_ndarray created by combine_slices has shape [cols, rows, slices]
         self.data = voxel_ndarray
         self.header = canonical_image.header
+        self.data_type =nifti_image.get_data_dtype().name
 
         self.file_name = dataset_name
         self.name = os.path.splitext(os.path.basename(dataset_name))[0]

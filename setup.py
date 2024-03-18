@@ -4,5 +4,4 @@ setup(
     name='SPRITE',
     version='0.1',
     packages=find_packages(),
-    # Include additional metadata here...
 )

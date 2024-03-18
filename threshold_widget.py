@@ -6,29 +6,31 @@ UCAIR, Department of Radiology and Imaging Sciences, University of Utah
 
 This file contains the ThresholdWidget class, which is a QWidget that contains the display settings for the 3D image.
 """
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets
 from PyQt5.QtCore import Qt, pyqtSignal
 
-from image3D import Image3D
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.colors as mcolors
-from matplotlib import pyplot as plt
 
 from Ui_threshold_widget import Ui_ThresholdWidget
-from superqt import QRangeSlider
+from superqt import QRangeSlider, QDoubleRangeSlider
 
 
 class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
-    range_changed_signal = pyqtSignal(tuple, Image3D)  # signal emitted when range changes (min, max, volume)
+    range_changed_signal = pyqtSignal(tuple)  # signal emitted when range changes (min, max)
+    clipping_changed_signal = pyqtSignal(bool)  # signal emitted when clipping changes
 
-    def __init__(self):
+    def __init__(self, float_or_whole: str = "whole"):
         super().__init__()
-
+        # float_or_whole is the type of QRangeSlider to create: range of whole numbers (QRangeSlider) or
+        # range of floating point numbers (QDoubleRangeSlider)
         self.current_volume = None
-        # self.dtype = _dtype
-        # self.parent = _parent
 
+        if float_or_whole not in ["whole", "float"]:
+            # TODO: raise an error
+            return
+
+        self.float_or_whole = float_or_whole
         self.ui = Ui_ThresholdWidget()
         self.ui.setupUi(self)
 
@@ -41,9 +43,14 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
         self.upper_limit_line = None
         self.canvas.setMinimumHeight(100)
         self.ui.plot_frame.layout().addWidget(self.canvas)
+        self.ui.log_scale_checkbox.toggled.connect(self.on_log_scale_button_clicked)
+        self.ui.clip_checkbox.toggled.connect(self.on_clip_button_clicked)
 
         # the range slider
-        self.slider = QRangeSlider(Qt.Horizontal, self)
+        if float_or_whole == "float":
+            self.slider = QDoubleRangeSlider(Qt.Horizontal, self)
+        else:
+            self.slider = QRangeSlider(Qt.Horizontal, self)
         # this is a workaround to make the slider look like the rest of the app
         self.slider.setStyleSheet("""QSlider {
                                             background-color: none;
@@ -55,7 +62,6 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
                                         QRangeSlider {
                                             qproperty-barColor: #9FCBFF;
                                         }""")
-        self.slider.setMaximumWidth(400)
         self.ui.verticalLayout.insertWidget(2, self.slider)
         self.slider.valueChanged.connect(self.on_slider_changed)
 
@@ -104,6 +110,13 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
 
             self.canvas.draw()
 
+    def on_log_scale_button_clicked(self):
+        if self.ui.log_scale_checkbox.isChecked():
+            self.ax.set_yscale('log')
+        else:
+            self.ax.set_yscale('linear')
+        self.canvas.draw()
+
     def set_volume(self, vol):
 
         self.current_volume = vol
@@ -134,12 +147,15 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
         self.ui.min_display_edit.setText(str(lower_val))
         self.ui.max_display_edit.setText(str(upper_val))
 
-        self.range_changed_signal.emit((lower_val, upper_val), self.current_volume)
+        self.range_changed_signal.emit((lower_val, upper_val))
 
     def on_min_edit_changed(self):
-        lower_val = int(self.ui.min_display_edit.text())
-        upper_val = int(self.ui.max_display_edit.text())
-        # upper_val = int(self.ui.upper_limit_slider.value())
+        if self.float_or_whole == "whole":
+            lower_val = int(self.ui.min_display_edit.text())
+            upper_val = int(self.ui.max_display_edit.text())
+        else:
+            lower_val = float(self.ui.min_display_edit.text())
+            upper_val = float(self.ui.max_display_edit.text())
 
         if lower_val < self.slider.minimum():
             lower_val = self.slider.minimum()
@@ -155,11 +171,15 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
             # self.upper_limit_slider.valueChanged.connect(self.on_max_slider_changed)
 
         self.slider.setValue((lower_val, upper_val))
-        self.range_changed_signal.emit((lower_val, upper_val), self.current_volume)
+        self.range_changed_signal.emit((lower_val, upper_val))
 
     def on_max_edit_changed(self):
-        upper_val = int(self.ui.max_display_edit.text())
-        lower_val = int(self.ui.min_display_edit.text())
+        if self.float_or_whole == "whole":
+            upper_val = int(self.ui.max_display_edit.text())
+            lower_val = int(self.ui.min_display_edit.text())
+        else:
+            upper_val = float(self.ui.max_display_edit.text())
+            lower_val = float(self.ui.min_display_edit.text())
 
         if upper_val > self.slider.maximum():
             upper_val = self.slider.maximum()
@@ -171,4 +191,7 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
                 upper_val = lower_val + 1
 
         self.slider.setValue((lower_val, upper_val))
-        self.range_changed_signal.emit((lower_val, upper_val), self.current_volume)
+        self.range_changed_signal.emit((lower_val, upper_val))
+
+    def on_clip_button_clicked(self):
+        self.clipping_changed_signal.emit(self.ui.clip_checkbox.isChecked())

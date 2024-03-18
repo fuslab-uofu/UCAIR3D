@@ -183,7 +183,7 @@ class Viewport(QFrame):
                     self.layer_stack[ind].cmap.set_over((0, 0, 0, 0))
                     self.layer_stack[ind].cmap.set_under((0, 0, 0, 0))
 
-                self.layer_stack[ind].format_cursor_data = lambda z: f'{int(z):d}'
+                self.layer_stack[ind].format_cursor_data = lambda z: f'{z:d}'
 
                 # set extent
                 # print(self.initial_extent)
@@ -352,7 +352,7 @@ class Viewport(QFrame):
             if 0 <= cursor_plot_col < image_width and 0 <= cursor_plot_row < image_height:
                 for ind in vol_indices:
                     if self.slice_stack[ind] is not None:
-                        self.cursor_data.append(int(self.slice_stack[ind][cursor_plot_col, cursor_plot_row]))
+                        self.cursor_data.append(self.slice_stack[ind][cursor_plot_col, cursor_plot_row])
 
             self.display_coords()
 
