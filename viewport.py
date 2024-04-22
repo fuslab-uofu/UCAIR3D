@@ -7,14 +7,11 @@
 
 from PyQt5.QtWidgets import QVBoxLayout, QFrame, QLabel
 from PyQt5 import QtCore
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.colors as mcolors
 import numpy as np
-from toolbar import Toolbar
+
 from enumerations import ViewDir
-from interaction_method import InteractionMethod
 
 
 class Viewport(QFrame):
@@ -87,7 +84,7 @@ class Viewport(QFrame):
             self.coords_label.setMinimumWidth(200)
             self.coords_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.coords_label.setObjectName("coords_label")
-            self.coords_label.setStyleSheet("#coords_label {background-color: black;}")
+            self.coords_label.setStyleSheet("#coords_label {background-color: black; font-size:10px; color: white;}")
             self.main_layout.addWidget(self.coords_label)
         else:
             self.coords_obj = self.fig.text(0.55, 0.04, '', fontsize=8, color='white')
@@ -122,7 +119,7 @@ class Viewport(QFrame):
         # for syncronizing and resetting zoom and pan
         self.initial_extent = None
 
-        # mouse motion signal for this LMViewport -----------------------------------------
+        # mouse motion signal for this viewport -----------------------------------------
         self.cid_motion_notify = self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
         self.cid_button_press = self.canvas.mpl_connect('button_press_event', self.on_mouse_press)
         self.cid_release = self.canvas.mpl_connect('button_release_event', self.on_mouse_release)
@@ -206,7 +203,8 @@ class Viewport(QFrame):
                 # if self.layer_stack[[ind] is not None:
                 #     self.layer_stack[ind].format_cursor_data = lambda z: f'{int(z):d}'
 
-                self.canvas.draw()  # necessary
+                self.canvas.draw_idle()  # necessary
+                self.canvas.flush_events()
 
     def sync_extents(self, factor):
         self.parent.sync_extents(self.id, factor)
@@ -258,9 +256,8 @@ class Viewport(QFrame):
         """ Slot for the signal sent when the user moves the mouse over a viewport.
             Resulting action depends on current viewport status (zooming, panning, idle).
             If idle, the coordinates of the cursor are displayed.
-            In addition:
-              if zooming, the axes are zoomed in or out based on mouse movement up/down
-              if panning, the axes are moved based on mouse movement up/down/left/right
+            If zooming, the axes are zoomed in or out based on mouse movement up/down
+            If panning, the axes are moved based on mouse movement up/down/left/right
         """
         if all(obj is None for obj in self.layer_stack):
             # no slices currently displayed, do nothing
@@ -281,7 +278,8 @@ class Viewport(QFrame):
             new_pos = [ax_pos.x0 + dx, ax_pos.y0 + dy, ax_pos.width, ax_pos.height]
             # set the new axes position
             self.ax.set_position(new_pos)
-            self.canvas.draw()  # necessary
+            self.canvas.draw_idle()  # necessary
+            self.canvas.flush_events()
         elif self.status == "zooming":
             sensitivity = 0.01
             dy = sensitivity * (event.y - self.mouse_y)
@@ -301,7 +299,8 @@ class Viewport(QFrame):
             # set the new axes position
             self.ax.set_position(new_pos)
 
-            self.canvas.draw()  # necessary
+            self.canvas.draw_idle()  # necessary
+            self.canvas.flush_events()
 
             self.parent.sync_extents(self.id, zoom_factor)
         elif self.status == "windowing":
@@ -315,7 +314,8 @@ class Viewport(QFrame):
                 else:
                     self.coords_obj.set_text('')
 
-                self.canvas.draw()  # necessary
+                self.canvas.draw_idle()  # necessary
+                self.canvas.flush_events()
                 return
 
             if self.show_crosshair:
@@ -340,7 +340,8 @@ class Viewport(QFrame):
 
             # get the voxel coordinates of the image volume and corresponding patient coordinates of that voxel
             voxel_ijk = self.volume_stack[vol_indices[0]].screenxy_to_imageijk(self.view_dir, cursor_plot_col,
-                                                                  cursor_plot_row, self.current_display_index)
+                                                                               cursor_plot_row,
+                                                                               self.current_display_index)
             if voxel_ijk is None:
                 return
 
@@ -398,7 +399,7 @@ class Viewport(QFrame):
                 return
             self.patient_coords = np.dot(self.volume_stack[vol_indices[0]].transform, self.voxel_coords)
 
-            self.display_coords()
+            # self.display_coords()
 
     def display_coords(self):
         # TODO: different display_convention(s)
@@ -439,4 +440,5 @@ class Viewport(QFrame):
         else:
             self.coords_obj.set_text(coord_string)
 
-        self.canvas.draw()  # necessary
+        self.canvas.draw_idle()  # necessary
+        self.canvas.flush_events()

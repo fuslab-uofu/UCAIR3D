@@ -41,8 +41,11 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
         self.canvas = FigureCanvas(self.fig)
         self.lower_limit_line = None
         self.upper_limit_line = None
-        self.canvas.setMinimumHeight(100)
+        # self.canvas.setMinimumHeight(100)
         self.ui.plot_frame.layout().addWidget(self.canvas)
+        # MMKline FIXME: temp
+        self.ui.plot_frame.layout().setContentsMargins(0, 0, 0, 0)
+
         self.ui.log_scale_checkbox.toggled.connect(self.on_log_scale_button_clicked)
         self.ui.clip_checkbox.toggled.connect(self.on_clip_button_clicked)
 
@@ -52,17 +55,20 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
         else:
             self.slider = QRangeSlider(Qt.Horizontal, self)
         # this is a workaround to make the slider look like the rest of the app
-        self.slider.setStyleSheet("""QSlider {
-                                            background-color: none;
-                                        }
-                                        QSlider::add-page:vertical {
-                                            background: none;
-                                            border: none;
-                                        }
-                                        QRangeSlider {
-                                            qproperty-barColor: #9FCBFF;
-                                        }""")
+        self.slider.setStyleSheet("""
+        QSlider {
+            background-color: none;
+        }
+        QSlider::add-page:vertical {
+            background: none;
+            border: none;
+        }
+        QRangeSlider {
+            qproperty-barColor: #3DAEE9;
+        }""")
         self.ui.verticalLayout.insertWidget(2, self.slider)
+        self.ui.verticalLayout.setContentsMargins(0, 0, 0, 0)
+        self.slider.sliderReleased.connect(self.on_slider_released)
         self.slider.valueChanged.connect(self.on_slider_changed)
 
         # the min and max edits
@@ -77,8 +83,14 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
         self.plot_histogram()
 
         # update the min and max edits
-        self.ui.min_display_edit.setText(str(self.current_volume.display_min))
-        self.ui.max_display_edit.setText(str(self.current_volume.display_max))
+        if self.float_or_whole == 'float':
+            lower_val = str(round(self.current_volume.display_min, 2))
+            upper_val = str(round(self.current_volume.display_max, 2))
+        else:
+            lower_val = str(self.current_volume.display_min)
+            upper_val = str(self.current_volume.display_max)
+        self.ui.min_display_edit.setText(lower_val)
+        self.ui.max_display_edit.setText(upper_val)
 
         # update the position of the vertical lines on the histogram
         self.lower_limit_line.set_xdata([self.current_volume.display_min, self.current_volume.display_min])
@@ -134,18 +146,31 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
     def on_slider_changed(self, vals):
         if self.current_volume is None or self.lower_limit_line is None or self.upper_limit_line is None:
             return
-
         lower_val = vals[0]
         upper_val = vals[1]
 
         # update the position of the vertical lines on the histogram
         self.lower_limit_line.set_xdata([lower_val, lower_val])
         self.upper_limit_line.set_xdata([upper_val, upper_val])
-        self.canvas.draw()
+        self.canvas.draw_idle()
+        self.canvas.flush_events()
 
         # update the min and max edits
-        self.ui.min_display_edit.setText(str(lower_val))
-        self.ui.max_display_edit.setText(str(upper_val))
+        if self.float_or_whole == 'float':
+            lower_val = str(round(vals[0], 2))
+            upper_val = str(round(vals[1], 2))
+        else:
+            lower_val = str(vals[0])
+            upper_val = str(vals[1])
+        self.ui.min_display_edit.setText(lower_val)
+        self.ui.max_display_edit.setText(upper_val)
+
+    def on_slider_released(self):
+        if self.current_volume is None or self.lower_limit_line is None or self.upper_limit_line is None:
+            return
+        vals = self.slider.value()
+        lower_val = vals[0]
+        upper_val = vals[1]
 
         self.range_changed_signal.emit((lower_val, upper_val))
 
