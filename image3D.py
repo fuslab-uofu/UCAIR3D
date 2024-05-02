@@ -21,19 +21,21 @@ class Image3D:
     def __init__(self, parent):
         # identification stuff
         self.parent = parent
-        self.file_type = ''
-        self.file_name = ''
-        self.name = ''
-
-        self.header = None
+        self.file_type = ''       # 'dicom' or 'nifti'
+        self.full_file_name = ''  # full path to the dataset
+        self.file_path = ''       # path to the dataset
+        self.file_name = ''       # file name without path or extensions ("base name")
 
         # the actual voxel data
         self.data = None
-        self.canonical_data = None
-
+        self.canonical_data = None  # FIXME: remove this? Is it used?
         self.data_type = None
 
+        # for NIfTI images, keep a reference to the (canonical) Nibabel object
+        self.canonical_nifti = None
+
         # geometry and stats
+        self.header = None
         self.dx = 1
         self.dy = 1
         self.dz = 1
@@ -92,28 +94,31 @@ class Image3D:
         pass
 
     def populate_with_nifti(self, nifti_image, dataset_name):
-        """ Populates the Image3D with data loaded from a nifti file using NiBabel.
+        """ Populates the Image3D with data loaded from a NIfTI file using NiBabel.
             Stores volume information, including affine transformation matrix for translating image ijk
             coordinates to patient coordinates.
         """
         canonical_image = nib.as_closest_canonical(nifti_image)
-        voxel_ndarray = np.asanyarray(canonical_image.dataobj)
+        self.canonical_nifti = canonical_image  # keep a reference to the canonical image
 
         # the voxel_ndarray created by combine_slices has shape [cols, rows, slices]
+        # FIXME: is this the right way to get the data? or should we use get_fdata()?
+        voxel_ndarray = np.asanyarray(canonical_image.dataobj)
         self.data = voxel_ndarray
         self.header = canonical_image.header
         self.data_type =nifti_image.get_data_dtype().name
 
-        self.file_name = dataset_name
-        self.name = os.path.splitext(os.path.basename(dataset_name))[0]
+        self.file_name = dataset_name  # full path to the dataset
+        self.name = os.path.splitext(os.path.basename(dataset_name))[0]  # file name without extension ("base name")
+        self.name = os.path.splitext(self.name)[0]  # remove any additional extensions (e.g., .nii.gz)
         self.file_type = 'nifti'
 
         self.dx = canonical_image.header['pixdim'][1:4][0]  # ROW height
         self.dy = canonical_image.header['pixdim'][1:4][1]  # COL width
         # FIXME: need to consider spacing between slices?
         self.dz = canonical_image.header['pixdim'][1:4][2]
-        self.num_rows = self.data.shape[1]
-        self.num_cols = self.data.shape[0]
+        self.num_rows = self.data.shape[1]  # notice order here - num_rows = shape[1] = y
+        self.num_cols = self.data.shape[0]  # num_cols = shape[0] = x
         self.num_slices = self.data.shape[2]
 
         # image ijk coord to patient coord affine
