@@ -170,15 +170,19 @@ class Viewport(QFrame):
                 else:  # "SAG"
                     ratio = vol.dz / vol.dy
 
+                if vol.clipping:
+                    this_cmap = vol.colormap.copy()
+                    # this makes values outside the range of the colormap transparent. otherwise,
+                    # they are the min or max color of the colormap
+                    this_cmap.set_over((0, 0, 0, 0))
+                    this_cmap.set_under((0, 0, 0, 0))
+                else:
+                    this_cmap = vol.colormap
+
                 # need to transpose to make the first axes left-right and second axes up-down
                 self.layer_stack[ind] = self.ax.imshow(self.slice_stack[ind].T, origin="lower", aspect=ratio,
-                                                       cmap=vol.colormap, alpha=vol.alpha, vmin=vol.display_min,
+                                                       cmap=this_cmap, alpha=vol.alpha, vmin=vol.display_min,
                                                        vmax=vol.display_max, interpolation=vol.interpolation)
-                # this makes values outside the range of the colormap transparent. otherwise, they are the min or max
-                # color of the colormap
-                if vol.clipping:
-                    self.layer_stack[ind].cmap.set_over((0, 0, 0, 0))
-                    self.layer_stack[ind].cmap.set_under((0, 0, 0, 0))
 
                 self.layer_stack[ind].format_cursor_data = lambda z: f'{z:d}'
 

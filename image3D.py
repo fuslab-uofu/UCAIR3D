@@ -21,10 +21,14 @@ class Image3D:
     def __init__(self, parent):
         # identification stuff
         self.parent = parent
+        # the following help with saving metadata about the registered images, deformation fields, segmentations, etc.
+        # created using the image3D class
         self.file_type = ''       # 'dicom' or 'nifti'
         self.full_file_name = ''  # full path to the dataset
         self.file_path = ''       # path to the dataset
-        self.file_name = ''       # file name without path or extensions ("base name")
+        self.file_name = ''       # file name, including extension(s)
+        self.file_base_name = ''  # file name without extension(s)
+
 
         # the actual voxel data
         self.data = None
@@ -52,29 +56,29 @@ class Image3D:
         self.y_dir = None
         self.z_dir = None
 
-    def populate(self, dataset, dataset_type, dataset_name):
-        """
-        Parameters
-        ----------
-        dataset
-        dataset_type
-        dataset_name
-
-        Returns
-        -------
-
-        """
-        if dataset_type == 'dicom':
-            is_enhanced = hasattr(dataset[0], 'SOPClassUID') and dataset[0].SOPClassUID.name.startswith('Enhanced')
-            self.populate_with_dicom(dataset, dataset_name, is_enhanced)
-        elif dataset_type == 'nifti':
-            self.populate_with_nifti(dataset, dataset_name)
-        else:
-            print('Unsupported data type ' + str(dataset_type))
-            return
-
-        self.data_min = np.min(self.data)
-        self.data_max = np.max(self.data)
+    # def populate(self, dataset, dataset_type, dataset_name):
+    #     """
+    #     Parameters
+    #     ----------
+    #     dataset
+    #     dataset_type
+    #     dataset_name
+    #
+    #     Returns
+    #     -------
+    #
+    #     """
+    #     if dataset_type == 'dicom':
+    #         is_enhanced = hasattr(dataset[0], 'SOPClassUID') and dataset[0].SOPClassUID.name.startswith('Enhanced')
+    #         self.populate_with_dicom(dataset, dataset_name, is_enhanced)
+    #     elif dataset_type == 'nifti':
+    #         self.populate_with_nifti(dataset, dataset_name)
+    #     else:
+    #         print('Unsupported data type ' + str(dataset_type))
+    #         return
+    #
+    #     self.data_min = np.min(self.data)
+    #     self.data_max = np.max(self.data)
 
     def populate_with_dicom(self, datasets, dataset_name, is_enhanced=False):
         """
@@ -93,7 +97,7 @@ class Image3D:
         """
         pass
 
-    def populate_with_nifti(self, nifti_image, dataset_name):
+    def populate_with_nifti(self, nifti_image, full_path_name):
         """ Populates the Image3D with data loaded from a NIfTI file using NiBabel.
             Stores volume information, including affine transformation matrix for translating image ijk
             coordinates to patient coordinates.
@@ -108,9 +112,11 @@ class Image3D:
         self.header = canonical_image.header
         self.data_type =nifti_image.get_data_dtype().name
 
-        self.file_name = dataset_name  # full path to the dataset
-        self.name = os.path.splitext(os.path.basename(dataset_name))[0]  # file name without extension ("base name")
-        self.name = os.path.splitext(self.name)[0]  # remove any additional extensions (e.g., .nii.gz)
+        self.full_file_name = full_path_name
+        self.file_path = os.path.dirname(full_path_name)
+        self.file_name = os.path.basename(full_path_name)
+        base_name = os.path.splitext(self.file_name)[0]
+        self.file_base_name = os.path.splitext(base_name)[0]  # remove any potential additional extensions (.nii.gz)
         self.file_type = 'nifti'
 
         self.dx = canonical_image.header['pixdim'][1:4][0]  # ROW height
