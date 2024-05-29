@@ -5,7 +5,7 @@
     Michelle Kline, Department of Radiology and Imaging Sciences, University of Utah
 """
 
-from PyQt5.QtWidgets import QVBoxLayout, QFrame, QLabel
+from PyQt5.QtWidgets import QVBoxLayout, QFrame, QLabel, QMessageBox
 from PyQt5 import QtCore
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -87,7 +87,7 @@ class Viewport(QFrame):
             self.coords_label.setStyleSheet("#coords_label {background-color: black; font-size:10px; color: white;}")
             self.main_layout.addWidget(self.coords_label)
         else:
-            self.coords_obj = self.fig.text(0.55, 0.04, '', fontsize=8, color='white')
+            self.coords_obj = self.fig.text(0.55, 0.04, '', fontsize=9, color='white')
 
         self.setLayout(self.main_layout)
 
@@ -161,7 +161,9 @@ class Viewport(QFrame):
             if vol is not None:
                 # TODO: try catch for None returned from get_slice
                 self.slice_stack[ind] = vol.get_slice(self.view_dir, self.current_display_index)
-
+                if self.slice_stack[ind] is None:
+                    QMessageBox.warning(self, "Oh snap!", "Problem getting volume slice.", QMessageBox.Ok)
+                    return
                 # to account for non-isotropic voxel dimensions, set aspect ratio
                 if self.view_dir == ViewDir.AX.dir:
                     ratio = vol.dy / vol.dx
@@ -403,7 +405,7 @@ class Viewport(QFrame):
                 return
             self.patient_coords = np.dot(self.volume_stack[vol_indices[0]].transform, self.voxel_coords)
 
-            # self.display_coords()
+            self.display_coords()
 
     def display_coords(self):
         # TODO: different display_convention(s)
@@ -435,8 +437,20 @@ class Viewport(QFrame):
         if len(self.cursor_data) == 0:
             cursor_data_str = ""
         else:
-            cursor_data_str = str(self.cursor_data)
+            # formatted_floats = ', '.join(f"{value:.3f}" for value in self.cursor_data)
+            # cursor_data_str = f"({formatted_floats})"
 
+            formatted_elements = []
+            for value in self.cursor_data:
+                if isinstance(value, float) or isinstance(value, np.float16) or isinstance(value, np.float32):
+                    formatted_elements.append(f"{value:.3f}")
+                elif (isinstance(value, int) or isinstance(value, np.int16) or isinstance(value, np.int32) or
+                      isinstance(value, np.uint16) or isinstance(value, np.uint32)):
+                    formatted_elements.append(f"{value}")
+                else:
+                    formatted_elements.append(value)
+
+            cursor_data_str = f"({', '.join(formatted_elements)})"
         coord_string = (
                 self.image_coords_string + "   " + self.patient_coords_string + "  " + cursor_data_str)
         if self.coords_outside:

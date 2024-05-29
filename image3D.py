@@ -24,7 +24,7 @@ class Image3D:
         # the following help with saving metadata about the registered images, deformation fields, segmentations, etc.
         # created using the image3D class
         self.file_type = ''       # 'dicom' or 'nifti'
-        self.full_file_name = ''  # full path to the dataset
+        self.full_file_name = ''  # full path and name of the dataset
         self.file_path = ''       # path to the dataset
         self.file_name = ''       # file name, including extension(s)
         self.file_base_name = ''  # file name without extension(s)
@@ -149,11 +149,20 @@ class Image3D:
 
         """
         if view == ViewDir.AX.dir:
-            vol_slice = self.get_z_slice(slice_num)
+            if 0 <= slice_num < self.num_slices:
+                vol_slice = self.get_z_slice(slice_num)
+            else:
+                return None
         elif view == ViewDir.SAG.dir:
-            vol_slice = self.get_x_slice(slice_num)
+            if 0 <= slice_num < self.num_cols:
+                vol_slice = self.get_x_slice(slice_num)
+            else:
+                return None
         elif view == ViewDir.COR.dir:
-            vol_slice = self.get_y_slice(slice_num)
+            if 0 <= slice_num < self.num_rows:
+                vol_slice = self.get_y_slice(slice_num)
+            else:
+                return None
         else:  # problem
             vol_slice = None
 

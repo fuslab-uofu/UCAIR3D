@@ -137,9 +137,16 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
             # TODO: clear the widgets
             return
 
+        self.slider.blockSignals(True)
         self.slider.setMinimum(self.current_volume.data_min)
         self.slider.setMaximum(self.current_volume.data_max)
+        # self.slider.setValue((self.current_volume.data_min, self.current_volume.data_max))
+        if self.current_volume.display_min < self.current_volume.data_min:
+            self.current_volume.display_min = self.current_volume.data_min
+        if self.current_volume.display_max > self.current_volume.data_max:
+            self.current_volume.display_max = self.current_volume.data_max
         self.slider.setValue((self.current_volume.display_min, self.current_volume.display_max))
+        self.slider.blockSignals(False)
 
         self.refresh()
 
