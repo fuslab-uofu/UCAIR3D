@@ -9,7 +9,7 @@ image. Colormap selection, transparency threshold_slider, and threshold widget f
 """
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtWidgets import QSlider, QFrame, QHBoxLayout, QVBoxLayout, QLabel
+from PyQt5.QtWidgets import QSlider, QFrame, QLabel
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from image3D import Image3D
@@ -18,12 +18,12 @@ from superqt import QColormapComboBox, QRangeSlider, QDoubleRangeSlider
 from Ui_display_settings_widget import Ui_settings_widget_frame
 
 
-class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
+class DisplaySettingsWidget(QFrame):
     display_settings_changed_signal = pyqtSignal(Image3D)  # signal emitted when the display settings change
 
     def __init__(self):
         super().__init__()
-        # display settings widget latches on to a volume (stores a reference to a volume) so that it can look at the
+        # display settings widget stores a reference to a volume so that it can look at the
         #  volume's data and create a histogram, and the volume's data type to determine if it should use a whole
         #  number or floating point threshold_slider for the threshold widget.
         # Note that the display settings widget is allowed to update the volume's display settings, but it does not
@@ -62,39 +62,10 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
         self.ui.colormap_combo_frame.layout().addWidget(self.colormap_combo)
         self.colormap_combo.currentIndexChanged.connect(self.on_colormap_changed)
 
-        # the transparency threshold_slider
-        self.transparency_label = QLabel("Transparency")
-        self.transparency_label.setStyleSheet("""
-            QLabel {
-                font-family: "Segoe UI";
-                font-size: 9pt;
-                }
-            """)
-        self.ui.alpha_slider_frame.layout().addWidget(self.transparency_label)
-        self.transparency_slider = QSlider()
-        self.transparency_slider.setOrientation(QtCore.Qt.Horizontal)
-        self.transparency_slider.setMinimum(0)
-        self.transparency_slider.setMaximum(100)
-        self.transparency_slider.setValue(100)
-        self.transparency_slider.setObjectName("transparency_slider")
-        self.transparency_slider.setStyleSheet("""
-            QSlider#transparency_slider::add-page:horizontal {
-                background: #646568;
-            }
-            """)
-        self.transparency_slider.valueChanged.connect(self.on_transparency_slider_changed)
-        self.ui.alpha_slider_frame.layout().addWidget(self.transparency_slider)
-        self.pct_label = QLabel("100%")
-        self.pct_label.setStyleSheet("""
-            QLabel {
-                font-family: "Segoe UI";
-                font-size: 9pt;
-                }
-            """)
-        self.ui.alpha_slider_frame.layout().addWidget(self.pct_label)
+        # the transparency slider
+        self.ui.transparency_slider.valueChanged.connect(self.on_transparency_slider_changed)
 
-        # the threshold widget - range of values to display (aka windowing, aka brightness/contrast)
-        # the histogram plot
+        # the histogram plot range of values to display (aka windowing, aka brightness/contrast)
         self.fig = Figure()
         self.ax = self.fig.add_axes([0, 0, 1, 1])
         self.ax.set_facecolor("black")
@@ -102,73 +73,128 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
         self.lower_limit_line = None
         self.upper_limit_line = None
         self.ui.hist_plot_frame.layout().addWidget(self.canvas)
-        self.ui.log_scale_checkbox.toggled.connect(self.on_log_scale_button_clicked)
-        self.ui.clip_checkbox.toggled.connect(self.on_clip_button_clicked)
-
+        self.ui.log_checkbox.toggled.connect(self.on_log_scale_button_toggled)
+        self.ui.clip_checkbox.toggled.connect(self.on_clip_button_toggled)
         # the threshold slider for range of values to display
-        # this will either be a QRangeSlider (whole numbers) or QDoubleRangeSlider
-        # (floats), depending on the volume's data will be initialized in set_volume
-        self.threshold_slider = None
-        self.slider_type = None  # "float" or "whole" data type family for volume
-
+        # this will either be a QRangeSlider (whole numbers) or QDoubleRangeSlider (floats),
+        # depending on the volume's data
+        self.range_slider_style = """
+                    QSlider {
+                        background-color: none;
+                    }
+                    QSlider::add-page:horizontal {
+                        background: none;
+                        border: none;
+                    }
+                    QSlider::sub-page:horizontal {
+                        background: none;
+                        border: none;
+                    }
+                    QSlider::groove:horizontal {
+                        background: black;
+                        border: none;
+                    }
+                    QRangeSlider {
+                        qproperty-barColor: #005FB8;
+                    }"""
+        self.threshold_slider = QRangeSlider(Qt.Horizontal, self)
+        # bug fix (a hack) for superqt QRangeSlider (https://github.com/pyapp-kit/superqt/issues/201)
+        self.threshold_slider.setStyleSheet(self.range_slider_style)
+        self.slider_type = "whole"  # default to whole number threshold_slider
+        self.ui.hist_slider_frame.layout().addWidget(self.threshold_slider)
+        self.threshold_slider.blockSignals(True)
+        self.threshold_slider.setMinimum(0)
+        self.threshold_slider.setMaximum(100)
+        self.threshold_slider.setValue((10, 90))
+        self.threshold_slider.blockSignals(False)
+        self.threshold_slider.sliderReleased.connect(self.on_threshold_slider_released)
+        self.threshold_slider.valueChanged.connect(self.on_threshold_slider_changed)
         # the min and max edits for the display threshold
-        self.ui.min_display_edit.returnPressed.connect(self.on_min_edit_changed)
-        self.ui.max_display_edit.returnPressed.connect(self.on_max_edit_changed)
+        self.ui.min_edit.returnPressed.connect(self.on_min_edit_changed)
+        self.ui.max_edit.returnPressed.connect(self.on_max_edit_changed)
+        # self.ui.histogram_frame.setStyleSheet("""
+        #     QFrame#histogram_frame{
+        #         border: 1px solid gray;
+        #     }
+        #     """)
+        self.ui.min_edit.setText("10")
+        self.ui.max_edit.setText("90")
 
     def set_volume(self, vol):
         # this links a volume to this display settings widget
         self.current_volume = vol
         if self.current_volume is None:
-            # TODO: clear widgets?
-            return
+            # reset colormap to grayscale
+            self.colormap_combo.setCurrentColormap("colorcet:cet_l1")
+            # reset transparency to 100%
+            self.ui.transparency_slider.setValue(100)
+            self.ui.pct_label.setText("100%")
+            # reset the thresholder widgets
+            self.ui.clip_checkbox.setChecked(False)
+            self.ui.log_checkbox.setChecked(False)
+            self.ax.cla()
+            self.canvas.draw()
+            self.ui.min_edit.setText("0")
+            self.ui.max_edit.setText("100")
+            self.threshold_slider.blockSignals(True)
+            self.threshold_slider.setMinimum(0)
+            self.threshold_slider.setMaximum(100)
+            self.threshold_slider.setValue((10, 90))
+            self.threshold_slider.blockSignals(False)
+        else:
+            # initialize the colormap combo based on this volume's current colormap
+            if vol.colormap is None:
+                self.colormap_combo.setCurrentColormap("colorcet:cet_l1")
+                vol.colormap = self.colormap_combo.currentColormap().to_mpl()
+            else:
+                try:
+                    self.colormap_combo.setCurrentColormap(vol.colormap.name)
+                except ValueError:
+                    self.colormap_combo.setCurrentColormap("colorcet:cet_l1")
+                    vol.colormap = self.colormap_combo.currentColormap().to_mpl()
 
-        # initialize the colormap combo based on this volume's current colormap
-        self.colormap_combo.setCurrentColormap(vol.colormap)
-        # get the list of colormaps in the combo
-        # available_colormaps = self.colormap_combo.colormaps()
-        # # find the index of the target colormap
-        # colormap_index = None
-        # for index, cmap in enumerate(available_colormaps):
-        #     if cmap.name == vol.colormap.name:
-        #         colormap_index = index
-        #         break
-        # if colormap_index is not None:
-        #     self.colormap_combo.setCurrentText(vol.colormap)
-        # else:
-        #     self.colormap_combo.setCurrentText("gray")
+            # initialize the transparency slider
+            self.ui.transparency_slider.blockSignals(True)
+            self.ui.transparency_slider.setValue(int(self.current_volume.alpha * 100))
+            self.ui.transparency_slider.blockSignals(False)
 
-        # initialize threshold threshold_slider to float or whole type
-        if vol.data_type in ['uint16', 'int16', 'uint8', 'int8', 'uint32', 'int32', 'uint64', 'int64']:
-            # this volume is whole numbers or binary - use the whole number threshold_slider
-            self.threshold_slider = QRangeSlider(Qt.Horizontal, self)
-            self.slider_type = "whole"
-        else:  # vol.data_type in ['float32', 'float64']:
-            self.threshold_slider = QDoubleRangeSlider(Qt.Horizontal, self)
-            self.slider_type = "float"
+            # initialize threshold threshold_slider to float or whole type
+            self.ui.clip_checkbox.setChecked(self.current_volume.clipping)
+            self.ui.log_checkbox.setChecked(False)
+            if vol.data_type in ['uint16', 'int16', 'uint8', 'int8', 'uint32', 'int32', 'uint64', 'int64']:
+                # this volume is whole numbers or binary - use the whole number threshold_slider
+                if self.slider_type == "float":
+                    # we already have a float threshold_slider, so we need to delete it and add a float
+                    self.ui.hist_slider_frame.layout().removeWidget(self.threshold_slider)
+                    self.threshold_slider.deleteLater()
+                    self.threshold_slider = QRangeSlider(Qt.Horizontal, self)
+                    self.threshold_slider.sliderReleased.connect(self.on_threshold_slider_released)
+                    self.threshold_slider.valueChanged.connect(self.on_threshold_slider_changed)
+                    self.ui.hist_slider_frame.layout().addWidget(self.threshold_slider)
+                self.slider_type = "whole"
+            else:  # vol.data_type in ['float32', 'float64']:
+                # this volume is floating point - use the float threshold_slider
+                if self.slider_type == "whole":
+                    # we already have a whole number threshold_slider, so we need to delete it and add a whole
+                    self.ui.hist_slider_frame.layout().removeWidget(self.threshold_slider)
+                    self.threshold_slider.deleteLater()
+                    self.threshold_slider = QDoubleRangeSlider(Qt.Horizontal, self)
+                    self.threshold_slider.sliderReleased.connect(self.on_threshold_slider_released)
+                    self.threshold_slider.valueChanged.connect(self.on_threshold_slider_changed)
+                    self.ui.hist_slider_frame.layout().addWidget(self.threshold_slider)
+                self.slider_type = "float"
+            # this is a workaround to make the threshold_slider look like the rest of the app
+            self.threshold_slider.setStyleSheet(self.range_slider_style)
+            self.threshold_slider.blockSignals(True)
+            self.threshold_slider.setMinimum(self.current_volume.data_min)
+            self.threshold_slider.setMaximum(self.current_volume.data_max)
+            self.threshold_slider.setValue((self.current_volume.display_min, self.current_volume.display_max))
+            self.threshold_slider.blockSignals(False)
 
-        # this is a workaround to make the threshold_slider look like the rest of the app
-        self.threshold_slider.setStyleSheet("""
-                    QSlider {
-                        background-color: none;
-                    }
-                    QSlider::add-page:vertical {
-                        background: none;
-                        border: none;
-                    }
-                    QRangeSlider {
-                        qproperty-barColor: #3DAEE9;
-                    }""")
-        self.ui.hist_slider_frame.layout().addWidget(self.threshold_slider)
+            # self.threshold_slider.sliderReleased.connect(self.on_threshold_slider_released)
+            # self.threshold_slider.valueChanged.connect(self.on_threshold_slider_changed)
 
-        # self.threshold_slider.blockSignals(True)
-        self.threshold_slider.setMinimum(self.current_volume.data_min)
-        self.threshold_slider.setMaximum(self.current_volume.data_max)
-        # self.threshold_slider.blockSignals(False)
-
-        self.threshold_slider.sliderReleased.connect(self.on_threshold_slider_released)
-        self.threshold_slider.valueChanged.connect(self.on_threshold_slider_changed)
-
-        self.refresh()
+            self.refresh()
 
     def refresh(self):
         """
@@ -179,9 +205,9 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
             return
 
         # alpha threshold_slider
-        self.transparency_slider.blockSignals(True)
-        self.transparency_slider.setValue(int(self.current_volume.alpha * 100))
-        self.transparency_slider.blockSignals(False)
+        self.ui.transparency_slider.blockSignals(True)
+        self.ui.transparency_slider.setValue(int(self.current_volume.alpha * 100))
+        self.ui.transparency_slider.blockSignals(False)
 
         # update the histogram plot
         self.plot_histogram()
@@ -193,8 +219,8 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
         else:  # self.slider_type == 'whole':
             lower_val = str(self.current_volume.display_min)
             upper_val = str(self.current_volume.display_max)
-        self.ui.min_display_edit.setText(lower_val)
-        self.ui.max_display_edit.setText(upper_val)
+        self.ui.min_edit.setText(lower_val)
+        self.ui.max_edit.setText(upper_val)
 
         # update the position of the vertical lines on the histogram
         self.lower_limit_line.set_xdata([self.current_volume.display_min, self.current_volume.display_min])
@@ -217,7 +243,7 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
 
             # plot_histogram the histogram
             self.ax.hist(self.current_volume.data.flatten(),
-                         range=(self.current_volume.data_min, self.current_volume.data_max), color='white', bins=50)  # bins=20
+                         range=(self.current_volume.data_min, self.current_volume.data_max), color='white', bins=50)
             # create vertical lines on the histogram to show the current threshold values
             self.lower_limit_line = self.ax.axvline(self.current_volume.display_min, color='magenta')
             self.upper_limit_line = self.ax.axvline(self.current_volume.display_max, color='blue')
@@ -236,11 +262,11 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
         When the user updates the min edit, the threshold_slider should be updated to reflect the new min value.
         """
         if self.slider_type == "whole":
-            lower_val = int(self.ui.min_display_edit.text())
-            upper_val = int(self.ui.max_display_edit.text())
+            lower_val = int(self.ui.min_edit.text())
+            upper_val = int(self.ui.max_edit.text())
         else:  # self.slider_type == "float":
-            lower_val = float(self.ui.min_display_edit.text())
-            upper_val = float(self.ui.max_display_edit.text())
+            lower_val = float(self.ui.min_edit.text())
+            upper_val = float(self.ui.max_edit.text())
 
         if lower_val < self.threshold_slider.minimum() or lower_val >= upper_val or lower_val > self.threshold_slider.maximum():
             return
@@ -275,11 +301,11 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
         When the user updates the max edit, the threshold_slider should be updated to reflect the new max value.
         """
         if self.slider_type == "whole":
-            upper_val = int(self.ui.max_display_edit.text())
-            lower_val = int(self.ui.min_display_edit.text())
+            upper_val = int(self.ui.max_edit.text())
+            lower_val = int(self.ui.min_edit.text())
         else:  # self.slider_type == "float":
-            upper_val = float(self.ui.max_display_edit.text())
-            lower_val = float(self.ui.min_display_edit.text())
+            upper_val = float(self.ui.max_edit.text())
+            lower_val = float(self.ui.min_edit.text())
 
         if upper_val > self.threshold_slider.maximum() or upper_val <= lower_val or upper_val < self.threshold_slider.minimum():
             return
@@ -312,7 +338,7 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
     def on_threshold_slider_changed(self, vals):
         """
         Called when the user moves the threshold_slider. This updates the min and max edits, and range lines on the
-        historgram, but does not tell the main window to update the viewports. This is done when the user releases
+        histogram, but does not tell the main window to update the viewports. This is done when the user releases
         the threshold_slider.
         """
         if self.current_volume is None or self.lower_limit_line is None or self.upper_limit_line is None:
@@ -337,12 +363,12 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
 
         # update the linked min and max edits
         # FIXME: do I need to block signals here?
-        self.ui.min_display_edit.blockSignals(True)
-        self.ui.min_display_edit.setText(lower_val)
-        self.ui.min_display_edit.blockSignals(False)
-        self.ui.max_display_edit.blockSignals(True)
-        self.ui.max_display_edit.setText(upper_val)
-        self.ui.max_display_edit.blockSignals(False)
+        self.ui.min_edit.blockSignals(True)
+        self.ui.min_edit.setText(lower_val)
+        self.ui.min_edit.blockSignals(False)
+        self.ui.max_edit.blockSignals(True)
+        self.ui.max_edit.setText(upper_val)
+        self.ui.max_edit.blockSignals(False)
 
         # we are not yet updating the volume or sending a signal to the main window to update the viewports
         # instead, we will wait until the user releases the threshold_slider
@@ -369,8 +395,8 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
         # tell main window to update all viewports
         self.display_settings_changed_signal.emit(self.current_volume)
 
-    def on_log_scale_button_clicked(self):
-        if self.ui.log_scale_checkbox.isChecked():
+    def on_log_scale_button_toggled(self):
+        if self.ui.log_checkbox.isChecked():
             self.ax.set_yscale('log')
         else:
             self.ax.set_yscale('linear')
@@ -390,7 +416,7 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
             return
 
         # update the linked label
-        self.pct_label.setText(str(val) + "%")
+        self.ui.pct_label.setText(str(val) + "%")
         # update the volume's alpha
         self.current_volume.alpha = val / 100
         # tell main window to update all viewports
@@ -402,7 +428,7 @@ class DisplaySettingsWidget(Ui_settings_widget_frame, QFrame):
         self.current_volume.clipping = val
         self.display_settings_changed_signal.emit(self.current_volume)
 
-    def on_clip_button_clicked(self):
+    def on_clip_button_toggled(self):
         if self.current_volume is None:
             return
 

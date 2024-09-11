@@ -29,7 +29,6 @@ class Image3D:
         self.file_name = ''       # file name, including extension(s)
         self.file_base_name = ''  # file name without extension(s)
 
-
         # the actual voxel data
         self.data = None
         self.canonical_data = None  # FIXME: remove this? Is it used?
@@ -55,6 +54,8 @@ class Image3D:
         self.x_dir = None
         self.y_dir = None
         self.z_dir = None
+
+        self.visible = True
 
     # def populate(self, dataset, dataset_type, dataset_name):
     #     """
@@ -97,7 +98,7 @@ class Image3D:
         """
         pass
 
-    def populate_with_nifti(self, nifti_image, full_path_name):
+    def populate_with_nifti(self, nifti_image, full_path_name, base_name=None):
         """ Populates the Image3D with data loaded from a NIfTI file using NiBabel.
             Stores volume information, including affine transformation matrix for translating image ijk
             coordinates to patient coordinates.
@@ -106,17 +107,21 @@ class Image3D:
         self.canonical_nifti = canonical_image  # keep a reference to the canonical image
 
         # the voxel_ndarray created by combine_slices has shape [cols, rows, slices]
-        # FIXME: is this the right way to get the data? or should we use get_fdata()?
+        # FIXME: is this the right way to get the data? or should we use get_fdata() (which I believe casts to float)?
         voxel_ndarray = np.asanyarray(canonical_image.dataobj)
         self.data = voxel_ndarray
         self.header = canonical_image.header
-        self.data_type =nifti_image.get_data_dtype().name
+        # self.data_type =nifti_image.get_data_dtype().name
+        self.data_type = str(self.data.dtype)
 
         self.full_file_name = full_path_name
         self.file_path = os.path.dirname(full_path_name)
         self.file_name = os.path.basename(full_path_name)
-        base_name = os.path.splitext(self.file_name)[0]
-        self.file_base_name = os.path.splitext(base_name)[0]  # remove any potential additional extensions (.nii.gz)
+        if base_name is not None:
+            self.file_base_name = base_name
+        else:
+            base_name = os.path.splitext(self.file_name)[0]
+            self.file_base_name = os.path.splitext(base_name)[0]  # remove any potential additional extensions (.nii.gz)
         self.file_type = 'nifti'
 
         self.dx = canonical_image.header['pixdim'][1:4][0]  # ROW height

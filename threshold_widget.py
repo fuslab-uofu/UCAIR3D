@@ -64,7 +64,7 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
             border: none;
         }
         QRangeSlider {
-            qproperty-barColor: #3DAEE9;
+            qproperty-barColor: #005FB8;
         }""")
         self.ui.verticalLayout.insertWidget(2, self.slider)
         self.ui.verticalLayout.setContentsMargins(0, 0, 0, 0)
