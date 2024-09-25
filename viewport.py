@@ -34,6 +34,8 @@ class MRIViewer(QWidget):
         self.window_method = window_method_
         self.volume_stack = [None] * num_vols
 
+        self.is_painting = False
+
         # FIXME: temp during dev. These will be set by the main app
         self.overlay_lut = np.array(
             [[0, 0, 0, 0],  # black
@@ -78,6 +80,7 @@ class MRIViewer(QWidget):
         self.crosshair_button.setFixedSize(24, 24)
         crosshair_icon = QIcon("..\\ui\\crosshair_white_icon.svg")
         self.crosshair_button.setIcon(crosshair_icon)
+        self.crosshair_button.setIconSize(self.crosshair_button.size())
         self.crosshair_button.clicked.connect(self.toggle_crosshairs)
         top_layout.addWidget(self.crosshair_button)
 
@@ -93,15 +96,15 @@ class MRIViewer(QWidget):
         self.axial_view.ui.roiBtn.setVisible(False)  # hide these for now
         main_layout.addWidget(self.axial_view)
 
-        # layout for painting and saving buttons (placed below the ImageView)
-        button_layout_bottom = QHBoxLayout()
-        self.paint_button = QPushButton("Toggle Paint Mode")
-        self.paint_button.clicked.connect(self.toggle_painting_mode)
-        button_layout_bottom.addWidget(self.paint_button)
-        self.save_button = QPushButton("Save Changes")
-        self.save_button.clicked.connect(self.save_overlay_to_voxels)
-        button_layout_bottom.addWidget(self.save_button)
-        main_layout.addLayout(button_layout_bottom)
+        # # layout for painting and saving buttons (placed below the ImageView)
+        # button_layout_bottom = QHBoxLayout()
+        # self.paint_button = QPushButton("Toggle Paint Mode")
+        # self.paint_button.clicked.connect(self.toggle_painting_mode)
+        # button_layout_bottom.addWidget(self.paint_button)
+        # self.save_button = QPushButton("Save Changes")
+        # self.save_button.clicked.connect(self.save_overlay_to_voxels)
+        # button_layout_bottom.addWidget(self.save_button)
+        # main_layout.addLayout(button_layout_bottom)
 
         # This is the main (background/base) image
         self.main_image_3D = None
@@ -125,7 +128,7 @@ class MRIViewer(QWidget):
         self.horizontal_line.setVisible(self.show_crosshairs)
         self.vertical_line.setVisible(self.show_crosshairs)
 
-        # Create a brush/kernel to use for drawing
+        # create a brush (kernel) to use for drawing
         self.kernel = np.array([
             [1, 1, 1],
             [1, 1, 1],
@@ -233,9 +236,9 @@ class MRIViewer(QWidget):
 
         self.axial_view.show()
 
-    def toggle_painting_mode(self):
+    def toggle_painting_mode(self, _is_painting):
         """Toggle between painting and normal modes."""
-        self.is_painting = not getattr(self, 'is_painting', False)  # Initialize if not defined
+        self.is_painting = _is_painting
         if self.is_painting:
             # Set the kernel (brush) for drawing
             # self.seg_image_2D.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
