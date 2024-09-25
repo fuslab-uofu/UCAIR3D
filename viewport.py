@@ -1,16 +1,13 @@
-import sys
-import nibabel as nib
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtGui
-from PyQt5.QtWidgets import QApplication, QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel
-from enumerations import ViewDir
+from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel
+from PyQt5.QtGui import QIcon, QFont
+
 
 class ColorImageView(pg.ImageView):
     """
     Wrapper around the ImageView to create a color lookup
-    table automatically as there seem to be issues with displaying
-    color images through pg.ImageView.
+    table automatically
     """
 
     def __init__(self, *args, **kwargs):
@@ -23,10 +20,10 @@ class ColorImageView(pg.ImageView):
 
 
 class MRIViewer(QWidget):
-    def __init__(self, nii_file, parent, id, view_dir_, num_vols, coords_outside_, zoom_method_, pan_method_, window_method_=None):
+    def __init__(self, nii_file, parent, id, view_dir_, num_vols, coords_outside_, zoom_method_, pan_method_,
+                 window_method_=None):
         super().__init__()
 
-        # Store the provided arguments
         self.parent = parent
         self.id = id
         self.view_dir = view_dir_
@@ -35,83 +32,119 @@ class MRIViewer(QWidget):
         self.zoom_method = zoom_method_
         self.pan_method = pan_method_
         self.window_method = window_method_
-
         self.volume_stack = [None] * num_vols
 
-        self.custom_colors_rgba_f = [
-            [0.0, 0.0, 0.0],  # background
-            [0.89411765, 0.10196078, 0.10980392],  # red
-            [0.21568627, 0.49411765, 0.72156863],  # blue
-            [0.30196078, 0.68627451, 0.29019608],  # green
-            [0.59607843, 0.30588235, 0.63921569],  # purple
-            [1., 0.49803922, 0.],                  # orange
-            [1., 1., 0.2],                         # yellow
-            [0.65098039, 0.3372549, 0.15686275],   # brown
-            [0.96862745, 0.50588235, 0.74901961],  # pink
-            [0.6, 0.6, 0.6]]                       # gray
-        self.custom_colors_rgb_i = np.array(self.custom_colors_rgba_f) * 255
-        self.custom_colors_rgb_i = self.custom_colors_rgb_i.astype(np.uint8)
+        # FIXME: temp during dev. These will be set by the main app
+        self.overlay_lut = np.array(
+            [[0, 0, 0, 0],  # black
+             [228, 25, 27, 255],  # red
+             [54, 126, 184, 255],  # blue
+             [76, 175, 74, 255],  # green
+             [151, 77, 163, 255],  # purple
+             [255, 127, 0, 255],  # orange
+             [255, 255, 51, 255],  # yellow
+             [165, 85, 40, 255],  # brown
+             [246, 128, 191, 255]],  # pink
+            dtype='uint8')
 
-        # Create main layout for this widget
+        # the main layout for this widget
         main_layout = QVBoxLayout(self)
 
-        # Label to display coordinates (Move it here, above the image view)
+        # horizontal layout for the coordinates label and buttons
+        top_layout = QHBoxLayout()
+        # coordinates label
         self.coordinates_label = QLabel("Coordinates: ", self)
-        main_layout.addWidget(self.coordinates_label)
+        font = QFont("Segoe UI", 9)
+        font.setItalic(True)
+        self.coordinates_label.setFont(font)
+        top_layout.addWidget(self.coordinates_label)
 
-        # Create PyQtGraph ImageView for axial plane
+        # add spacing between the buttons and right edge
+        top_layout.addStretch()
+
+        # histogram visibility button
+        self.histogram_button = QPushButton()
+        self.histogram_button.setCheckable(True)
+        self.histogram_button.setChecked(False)
+        self.histogram_button.setFixedSize(24, 24)
+        histogram_icon = QIcon("..\\ui\\colorWheelIcon.svg")
+        self.histogram_button.setIcon(histogram_icon)
+        self.histogram_button.clicked.connect(self.toggle_histogram)
+        top_layout.addWidget(self.histogram_button)
+
+        # crosshair visibility button
+        self.crosshair_button = QPushButton()
+        self.crosshair_button.setCheckable(True)
+        self.crosshair_button.setFixedSize(24, 24)
+        crosshair_icon = QIcon("..\\ui\\crosshair_white_icon.svg")
+        self.crosshair_button.setIcon(crosshair_icon)
+        self.crosshair_button.clicked.connect(self.toggle_crosshairs)
+        top_layout.addWidget(self.crosshair_button)
+
+
+
+        # add the top layout to the main layout (above the imageView)
+        main_layout.addLayout(top_layout)
+
+        # ImageView for axial plane
         self.axial_view = ColorImageView()
+        self.axial_view.getHistogramWidget().setVisible(False)
+        self.axial_view.ui.menuBtn.setVisible(False)  # hide these for now
+        self.axial_view.ui.roiBtn.setVisible(False)  # hide these for now
         main_layout.addWidget(self.axial_view)
 
-        # Create buttons for painting, saving, and toggling the histogram
-        button_layout = QHBoxLayout()
-
+        # layout for painting and saving buttons (placed below the ImageView)
+        button_layout_bottom = QHBoxLayout()
         self.paint_button = QPushButton("Toggle Paint Mode")
         self.paint_button.clicked.connect(self.toggle_painting_mode)
-        button_layout.addWidget(self.paint_button)
-
-        self.save_button = QPushButton("Save Overlay to Voxels")
+        button_layout_bottom.addWidget(self.paint_button)
+        self.save_button = QPushButton("Save Changes")
         self.save_button.clicked.connect(self.save_overlay_to_voxels)
-        button_layout.addWidget(self.save_button)
+        button_layout_bottom.addWidget(self.save_button)
+        main_layout.addLayout(button_layout_bottom)
 
-        # Button to toggle the visibility of the histogram
-        self.histogram_button = QPushButton("Toggle Histogram")
-        self.histogram_button.clicked.connect(self.toggle_histogram)
-        button_layout.addWidget(self.histogram_button)
-
-        # Add the button layout below the ImageView
-        main_layout.addLayout(button_layout)
+        # This is the main (background/base) image
+        self.main_image_3D = None
 
         # Add the overlay image to the same view
-        self.overlay_item = pg.ImageItem()
-        self.axial_view.view.addItem(self.overlay_item)
+        self.seg_image_3D = None
+        self.seg_image_2D = pg.ImageItem()
+        self.axial_view.view.addItem(self.seg_image_2D)
 
         self.axial_view.getView().scene().sigMouseMoved.connect(self.mouse_moved)
-        self.axial_view.timeLine.sigPositionChanged.connect(lambda: self.update_overlay(int(self.axial_view.currentIndex)))
-
-        self.base_lut = pg.colormap.get('viridis').getLookupTable(0.0, 1.0, 256)
-        self.overlay_lut = self.custom_colors_rgb_i
-
-        # Crosshair visibility flag
-        self.show_crosshairs = False
+        self.axial_view.timeLine.sigPositionChanged.connect(
+            lambda: self.update_overlay(int(self.axial_view.currentIndex)))
 
         # Create crosshair lines (invisible initially)
         self.horizontal_line = pg.InfiniteLine(angle=0, pen=pg.mkPen('r', width=0.5), movable=False)
         self.vertical_line = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=0.5), movable=False)
         self.axial_view.addItem(self.horizontal_line, ignoreBounds=True)
         self.axial_view.addItem(self.vertical_line, ignoreBounds=True)
-        # self.toggle_crosshair_visibility(False)  # Initially hide crosshairs
+        # crosshair visibility flag
+        self.show_crosshairs = False
+        self.horizontal_line.setVisible(self.show_crosshairs)
+        self.vertical_line.setVisible(self.show_crosshairs)
 
         # Create a brush/kernel to use for drawing
-        # self.kernel = np.array([
-        #     [1, 1, 1],
-        #     [1, 1, 1],
-        #     [1, 1, 1]
-        # ])
-        radius = 2
-        self.kernel = self.create_circular_kernel(radius)
+        self.kernel = np.array([
+            [1, 1, 1],
+            [1, 1, 1],
+            [1, 1, 1]
+        ])
+
+        # radius = 2
+        # self.kernel = self.create_circular_kernel(radius)
         # Update the views with initial slices and colormap
-        self.refresh()
+        # self.refresh()
+
+        self.axial_view.imageItem.mouseClickEvent = self.mouse_click_event
+
+    def mouse_click_event(self, event):
+        # Paint action modifies self.temp_image (3D array) at the current slice
+        if self.is_painting:
+            # Get current slice from ImageView
+            current_slice = int(self.axial_view.currentIndex)
+            print(current_slice)
 
     def create_circular_kernel(self, radius):
         """Create a circular kernel with the specified radius."""
@@ -131,26 +164,13 @@ class MRIViewer(QWidget):
 
         return kernel
 
-
-    def update_overlay(self, index):
-        """Update the overlay image with the corresponding slice from the segmentation data."""
-        if self.volume_stack[2] is not None:
-            overlay_slice = self.volume_stack[2].data[index, :, :]
-            self.overlay_item.setImage(overlay_slice)
-            self.overlay_item.setLookupTable(self.overlay_lut)
-
     def toggle_crosshairs(self):
         """Toggle crosshair visibility."""
         self.show_crosshairs = not self.show_crosshairs
-        self.toggle_crosshair_visibility(self.show_crosshairs)
-
-    def toggle_crosshair_visibility(self, visible):
-        """Show or hide crosshair lines."""
-        self.horizontal_line.setVisible(visible)
-        self.vertical_line.setVisible(visible)
+        self.horizontal_line.setVisible(self.show_crosshairs)
+        self.vertical_line.setVisible(self.show_crosshairs)
 
     def mouse_moved(self, pos):
-
         img_item = self.axial_view.getImageItem()
         if img_item is not None and img_item.sceneBoundingRect().contains(pos):
             # Transform the scene coordinates to image coordinates
@@ -161,10 +181,10 @@ class MRIViewer(QWidget):
             z = int(self.axial_view.currentIndex)  # Get the current slice index
 
             # Ensure coordinates are within image bounds
-            if 0 <= x < img_shape[1] and 0 <= y < img_shape[0]:
-                voxel_value = self.volume_stack[0].data[y, x, z]
+            if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
+                voxel_value = self.volume_stack[0].data[x, y, z]
                 coordinates_text = "Coordinates: x={:3d}, y={:3d}, z={:3d}, Voxel Value: {:4.2f}".format(x, y, z,
-                                                                                                          voxel_value)
+                                                                                                         voxel_value)
                 self.coordinates_label.setText(coordinates_text)
                 # self.coordinates_label.setText(f"Coordinates: x={x}, y={y}, z={z}, Voxel Value: {voxel_value}")
                 # Update crosshair position if crosshairs are enabled
@@ -181,40 +201,35 @@ class MRIViewer(QWidget):
     def update_volume_stack(self, new_volume, stack_position):
         """Update the volume stack with a new volume in the specified position."""
         self.volume_stack[stack_position] = new_volume
+        if stack_position == 0:
+            # Update the main item with the new volume data
+            self.main_image_3D = np.transpose(self.volume_stack[0].data, (2, 0, 1))
+        if stack_position == 2:
+            # Update the overlay item with the new volume data
+            self.seg_image_3D = np.transpose(self.volume_stack[2].data, (2, 0, 1))
+            # self.seg_image_3D = self.volume_stack[2].data
 
         self.refresh()
 
-    def refresh(self):
-        # Apply segmentation data with fixed levels to match the number of unique values
-        if self.volume_stack[0] is not None:
-            self.axial_view.setImage(self.volume_stack[0].data.T, levels=(0, 255))
-            self.axial_view.getImageItem().getViewBox().invertY(False)
-            self.axial_view.getImageItem().setLookupTable(self.base_lut)
-
-        if self.volume_stack[2] is not None:
-            # Extract the slice from the overlay image corresponding to the current slice of the base image
-            overlay_slice = self.volume_stack[2].data[:, :, int(self.axial_view.currentIndex)]
+    def update_overlay(self, index):
+        """Update the overlay image with the corresponding slice from the segmentation data."""
+        if self.seg_image_3D is not None:
+            # overlay_slice = self.seg_image_3D[int(self.axial_view.currentIndex), :, :]
+            overlay_slice = self.seg_image_3D[int(self.axial_view.currentIndex), :, :]
             # Set the data for the overlay ImageItem
-            self.overlay_item.setImage(overlay_slice, opacity=0.5)  # Adjust opacity for transparency
-            self.overlay_item.setLookupTable(self.overlay_lut)
+            self.seg_image_2D.setImage(overlay_slice, opacity=1.0)  # Adjust opacity for transparency
+            self.seg_image_2D.setLevels([0, 8])
+            self.seg_image_2D.setLookupTable(self.overlay_lut)
+            # self.seg_image_2D.getViewBox().invertY(False)
+            # self.seg_image_2D.getViewBox().invertX(True)
 
-            # # self.axial_view.addItem(self.volume_stack[2])
-            # # Customize the histogram to reflect discrete colors
-            # histogram = self.axial_view.getHistogramWidget()
-            # gradient_editor = histogram.gradient
-            #
-            # # Remove the default continuous gradient and set up discrete ticks
-            # gradient_state = {
-            #     'mode': 'rgb',
-            #     'ticks': [
-            #         (0.0, (0, 0, 0, 255)),  # Black for value 0
-            #         (0.5, (255, 0, 0, 255)),  # Red for value 1
-            #         (1.0, (0, 255, 0, 255))  # Green for value 2
-            #     ]
-            # }
-            #
-            # # Apply the new gradient state with discrete ticks
-            # gradient_editor.restoreState(gradient_state)
+    def refresh(self):
+        if self.main_image_3D is not None:
+            self.axial_view.setImage(self.main_image_3D, levels=(0, 255))
+            self.axial_view.getImageItem().getViewBox().invertY(False)
+            self.axial_view.getImageItem().getViewBox().invertX(True)
+
+        self.update_overlay(self.axial_view.currentIndex)
 
         self.axial_view.show()
 
@@ -223,39 +238,25 @@ class MRIViewer(QWidget):
         self.is_painting = not getattr(self, 'is_painting', False)  # Initialize if not defined
         if self.is_painting:
             # Set the kernel (brush) for drawing
-            # self.overlay_item.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
-            self.overlay_item.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
+            # self.seg_image_2D.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
+            self.seg_image_2D.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
         else:
             # Disable drawing
-            self.overlay_item.setDrawKernel(None)
+            self.seg_image_2D.setDrawKernel(None)
 
     def save_overlay_to_voxels(self):
         """Update the underlying voxel data with the painted pixels in the overlay."""
-        # Extract the current image from the ImageItem (this includes the painted pixels)
-        painted_image = np.rot90(self.axial_view.image)
-
-        # Update the voxel data at the current axial slice with the painted pixels
-        self.segmentation_data = painted_image
-
-        # Optional: Refresh the view to show the updated voxel data
-        self.refresh()
-
-        # Optional: Save the updated NIfTI file back to disk
-        updated_img = nib.Nifti1Image(self.segmentation_data, self.nii_img.affine)
-        nib.save(updated_img, 'updated_segmentation.nii')
-        print("Overlay saved to voxels and NIfTI file updated.")
+        pass
 
     def toggle_histogram(self):
         """Toggle the visibility of the histogram."""
         histogram = self.axial_view.getHistogramWidget()
         is_visible = histogram.isVisible()
         histogram.setVisible(not is_visible)
-        self.axial_view.ui.menuBtn.setVisible(not is_visible)
-        self.axial_view.ui.roiBtn.setVisible(not is_visible)
+
 
     def hide_histogram_buttons(self):
         """Hide the ROI and MENU buttons in the histogram widget."""
         histogram = self.axial_view.getHistogramWidget()
         histogram.ui.roiBtn.hide()  # Hide the ROI button
         histogram.ui.menuBtn.hide()  # Hide the MENU button
-
