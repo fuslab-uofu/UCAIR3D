@@ -1,7 +1,10 @@
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel
+from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider
 from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtCore import Qt
+
+from enumerations import ViewDir
 
 
 class ColorImageView(pg.ImageView):
@@ -16,11 +19,12 @@ class ColorImageView(pg.ImageView):
 
     def updateImage(self, autoHistogramRange=True):
         super().updateImage(autoHistogramRange)
-        self.getImageItem().setLookupTable(self.lut)
+        if self.lut is not None:
+            self.getImageItem().setLookupTable(self.lut)
 
 
-class MRIViewer(QWidget):
-    def __init__(self, nii_file, parent, id, view_dir_, num_vols, coords_outside_, zoom_method_, pan_method_,
+class Viewport(QWidget):
+    def __init__(self, parent, id, view_dir_, num_vols, coords_outside_, zoom_method_, pan_method_,
                  window_method_=None):
         super().__init__()
 
@@ -35,6 +39,10 @@ class MRIViewer(QWidget):
         self.volume_stack = [None] * num_vols
 
         self.is_painting = False
+
+        # Store the markers added by the user
+        self.markers = []
+        self.dragging_marker = None
 
         # FIXME: temp during dev. These will be set by the main app
         self.overlay_lut = np.array(
@@ -60,10 +68,8 @@ class MRIViewer(QWidget):
         font.setItalic(True)
         self.coordinates_label.setFont(font)
         top_layout.addWidget(self.coordinates_label)
-
         # add spacing between the buttons and right edge
         top_layout.addStretch()
-
         # histogram visibility button
         self.histogram_button = QPushButton()
         self.histogram_button.setCheckable(True)
@@ -73,7 +79,6 @@ class MRIViewer(QWidget):
         self.histogram_button.setIcon(histogram_icon)
         self.histogram_button.clicked.connect(self.toggle_histogram)
         top_layout.addWidget(self.histogram_button)
-
         # crosshair visibility button
         self.crosshair_button = QPushButton()
         self.crosshair_button.setCheckable(True)
@@ -84,27 +89,34 @@ class MRIViewer(QWidget):
         self.crosshair_button.clicked.connect(self.toggle_crosshairs)
         top_layout.addWidget(self.crosshair_button)
 
-
-
         # add the top layout to the main layout (above the imageView)
         main_layout.addLayout(top_layout)
 
-        # ImageView for axial plane
+        image_view_layout = QHBoxLayout()
+        # ImageView for axial view
         self.axial_view = ColorImageView()
         self.axial_view.getHistogramWidget().setVisible(False)
         self.axial_view.ui.menuBtn.setVisible(False)  # hide these for now
         self.axial_view.ui.roiBtn.setVisible(False)  # hide these for now
-        main_layout.addWidget(self.axial_view)
+        image_view_layout.addWidget(self.axial_view, stretch=2)
 
-        # # layout for painting and saving buttons (placed below the ImageView)
-        # button_layout_bottom = QHBoxLayout()
-        # self.paint_button = QPushButton("Toggle Paint Mode")
-        # self.paint_button.clicked.connect(self.toggle_painting_mode)
-        # button_layout_bottom.addWidget(self.paint_button)
-        # self.save_button = QPushButton("Save Changes")
-        # self.save_button.clicked.connect(self.save_overlay_to_voxels)
-        # button_layout_bottom.addWidget(self.save_button)
-        # main_layout.addLayout(button_layout_bottom)
+        # transparency slider for the base layer (vertical orientation)
+        slider_layout = QVBoxLayout()
+        # self.opacity_label = QLabel("Opacity")
+        # slider_layout.addWidget(self.opacity_label, alignment=Qt.AlignHCenter)
+        self.opacity_slider = QSlider(Qt.Vertical)
+        # self.opacity_slider.setFixedWidth(20)
+        self.opacity_slider.setRange(0, 100)  # Slider values from 0 to 100
+        self.opacity_slider.setValue(100)  # Default to fully opaque
+        self.opacity_slider.setTickPosition(QSlider.TicksRight)
+        self.opacity_slider.setTickInterval(10)
+        self.opacity_slider.valueChanged.connect(self.update_opacity)
+        slider_layout.addWidget(self.opacity_slider, alignment=Qt.AlignHCenter)
+        image_view_layout.addLayout(slider_layout, stretch=0)
+        self.opacity_slider.setVisible(False)
+
+        # add image_view_layout to the main layout
+        main_layout.addLayout(image_view_layout)
 
         # This is the main (background/base) image
         self.main_image_3D = None
@@ -142,12 +154,74 @@ class MRIViewer(QWidget):
 
         self.axial_view.imageItem.mouseClickEvent = self.mouse_click_event
 
+    def update_opacity(self, value):
+        """Update the opacity of the base image (volume_stack[0])."""
+        opacity_value = value / 100  # Convert slider value to a range of 0.0 - 1.0
+        self.axial_view.getImageItem().setOpacity(opacity_value)
+
     def mouse_click_event(self, event):
         # Paint action modifies self.temp_image (3D array) at the current slice
         if self.is_painting:
             # Get current slice from ImageView
             current_slice = int(self.axial_view.currentIndex)
             print(current_slice)
+        else:
+            if event.button() == Qt.LeftButton:
+                img_item = self.axial_view.getImageItem()
+                pos = event.pos()
+                mouse_point = img_item.mapFromScene(pos)
+                if img_item is not None and img_item.sceneBoundingRect().contains(mouse_point):
+                    # Transform the scene coordinates to image coordinates
+                    img_shape = self.volume_stack[0].data.shape
+                    x = int(pos.x())
+                    y = int(pos.y())
+                    z = int(self.axial_view.currentIndex)  # Get the current slice index
+
+                    # Ensure coordinates are within image bounds
+                    if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
+                        self.add_marker(x, y)
+
+                    print(f"Point added at: x={x}, y={y}, z={z}")
+
+        # Propagate the event for any further processing
+        event.ignore()
+
+    def add_marker(self, x, y):
+        """Add a marker at the specified (x, y) coordinates."""
+        # Create a scatter plot item as a marker
+        marker = pg.ScatterPlotItem()
+        marker.sigClicked.connect(self.marker_clicked)  # Connect to the signal
+        marker.addPoints([{'pos': (x, y), 'brush': pg.mkBrush('r'), 'size': 10}])  # Customize size and color
+
+        # Store position and metadata (current index) with the point
+        slice_index = int(self.axial_view.currentIndex)
+        marker_index = len(self.markers)
+
+        marker.addPoints([{
+            'pos': (x, y),
+            'brush': pg.mkBrush('r'),
+            'size': 10,
+            'data': {'slice_index': slice_index, 'marker_index': marker_index}  # Store extra info here
+        }])
+
+        # Add marker to the view
+        self.axial_view.addItem(marker)
+
+        # Store marker for future reference (e.g., clearing markers)
+        self.markers.append(marker)
+
+    def clear_markers(self):
+        """Remove all markers from the image view."""
+        for marker in self.markers:
+            self.axial_view.removeItem(marker)
+        self.markers.clear()
+
+    def marker_clicked(self, plot, points):
+        """Handle marker click event."""
+        # Store the clicked point for dragging
+        if len(points) > 0:
+            self.dragging_marker = points[0]
+            print(f"Marker clicked at position: {self.dragging_marker.pos()}, {self.dragging_marker.data()['slice_index']}")
 
     def create_circular_kernel(self, radius):
         """Create a circular kernel with the specified radius."""
@@ -189,9 +263,19 @@ class MRIViewer(QWidget):
                 coordinates_text = "Coordinates: x={:3d}, y={:3d}, z={:3d}, Voxel Value: {:4.2f}".format(x, y, z,
                                                                                                          voxel_value)
                 self.coordinates_label.setText(coordinates_text)
-                # self.coordinates_label.setText(f"Coordinates: x={x}, y={y}, z={z}, Voxel Value: {voxel_value}")
-                # Update crosshair position if crosshairs are enabled
-                # if self.show_crosshairs:
+                if self.dragging_marker:
+                    pass
+                    # # Get the position of the mouse
+                    # img_item = self.axial_view.getImageItem()
+                    # mouse_point = img_item.mapFromScene(pos)
+                    #
+                    # # Update the position of the marker
+                    # x = int(mouse_point.x())
+                    # y = int(mouse_point.y())
+                    #
+                    # # Move the marker to the new position
+                    # self.dragging_marker.setData(pos=[(x, y)], brush='r', size=10)
+
             else:
                 self.coordinates_label.setText("")
 
@@ -204,6 +288,14 @@ class MRIViewer(QWidget):
     def update_volume_stack(self, new_volume, stack_position):
         """Update the volume stack with a new volume in the specified position."""
         self.volume_stack[stack_position] = new_volume
+        if self.view_dir == ViewDir.AX.dir:
+            ratio = new_volume.dy / new_volume.dx
+        elif self.view_dir == ViewDir.COR.dir:
+            ratio = new_volume.dz / new_volume.dx
+        else:  # "SAG"
+            ratio = new_volume.dz / new_volume.dy
+            self.axial_view.getView().setAspectLocked(True, ratio=ratio)
+
         if stack_position == 0:
             # Update the main item with the new volume data
             self.main_image_3D = np.transpose(self.volume_stack[0].data, (2, 0, 1))
@@ -256,10 +348,11 @@ class MRIViewer(QWidget):
         histogram = self.axial_view.getHistogramWidget()
         is_visible = histogram.isVisible()
         histogram.setVisible(not is_visible)
+        self.opacity_slider.setVisible(not is_visible)
 
-
-    def hide_histogram_buttons(self):
-        """Hide the ROI and MENU buttons in the histogram widget."""
-        histogram = self.axial_view.getHistogramWidget()
-        histogram.ui.roiBtn.hide()  # Hide the ROI button
-        histogram.ui.menuBtn.hide()  # Hide the MENU button
+    #
+    # def hide_histogram_buttons(self):
+    #     """Hide the ROI and MENU buttons in the histogram widget."""
+    #     histogram = self.axial_view.getHistogramWidget()
+    #     histogram.ui.roiBtn.hide()  # Hide the ROI button
+    #     histogram.ui.menuBtn.hide()  # Hide the MENU button
