@@ -159,7 +159,6 @@ class Viewport(QWidget):
         # connect the mouse click event to the image view
         self.image_view.imageItem.mouseClickEvent = self._mouse_click_event
         self.image_view.getHistogramWidget().sigLevelChangeFinished.connect(self._update_image_object)
-        # hist = pg.HistogramLUTItem()
         self.image_view.getHistogramWidget().sigLookupTableChanged.connect(self._reapply_lut)
 
     #  -----------------------------------------------------------------------------------------------------------------
@@ -342,12 +341,16 @@ class Viewport(QWidget):
             else:
                 if not found_bottom_image:
                     # this is the "bottom" image and will be set as the 3D image item in the image view
+                    im_obj = self.image3D_obj_stack[ind]
                     self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
-                    self.image_view.setImage(self.array3D_stack[ind])
+                    self.image_view.setImage(im_data)
                     main_image = self.image_view.getImageItem()
+                    # Set the levels to prevent LUT rescaling based on the slice content
+                    main_image.setLevels([im_obj.display_min, im_obj.display_max])
                     # apply the opacity of the Image3D object to the ImageItem
-                    main_image.setOpacity(self.image3D_obj_stack[ind].alpha)
-                    main_image.setLookupTable(self.image3D_obj_stack[ind].colormap)
+                    main_image.setOpacity(im_obj.alpha)
+                    main_image.setLookupTable(im_obj.colormap)
+
                     # self.image_view.updateImage()
                     self.image_view.getImageItem().getViewBox().invertY(False)
                     self.image_view.getImageItem().getViewBox().invertX(True)
@@ -394,7 +397,7 @@ class Viewport(QWidget):
                     found_bottom_overlay = True
                     continue
                 else:
-                    self._set_overlay_slice(layer_index)
+                    self._update_overlay_slice(layer_index)
 
     def _update_overlay_slice(self, layer_index):
         """Update the overlay image with the current slice from the array3D."""
@@ -406,27 +409,27 @@ class Viewport(QWidget):
             # apply the slice to the overlay ImageItem
             self.is_user_histogram_interaction = False
             overlay_image_item.setImage(overlay_slice)
-            # Set the levels to [0, 2] to avoid LUT rescaling based on the slice content
-            overlay_image_item.setLevels([0, 2])  # FIXME: during dev
+            # Set the levels to prevent LUT rescaling based on the slice content
+            overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
             overlay_image_item.setOpacity(overlay_image_object.alpha)
             overlay_image_item.setLookupTable(overlay_image_object.colormap)
             self.is_user_histogram_interaction = True
 
-    def _set_overlay_slice(self, layer_index):
-        """Update the overlay image with the current slice from the array3D."""
-        if self.array3D_stack[layer_index] is not None:
-            overlay_image_object = self.image3D_obj_stack[layer_index]
-            overlay_data = self.array3D_stack[layer_index]
-            overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
-            overlay_image_item = self.array2D_stack[layer_index]
-            # apply the slice to the overlay ImageItem
-            self.is_user_histogram_interaction = False
-            overlay_image_item.setImage(overlay_slice)
-            # Set the levels to [0, 2] to avoid LUT rescaling based on the slice content
-            overlay_image_item.setLevels([0, 2])  # FIXME: during dev
-            overlay_image_item.setOpacity(overlay_image_object.alpha)
-            overlay_image_item.setLookupTable(overlay_image_object.colormap)
-            # self.image_view.updateImage()
+    # def _set_overlay_slice(self, layer_index):
+    #     """Set the overlay image with the current slice from the array3D."""
+    #     if self.array3D_stack[layer_index] is not None:
+    #         overlay_image_object = self.image3D_obj_stack[layer_index]
+    #         overlay_data = self.array3D_stack[layer_index]
+    #         overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
+    #         overlay_image_item = self.array2D_stack[layer_index]
+    #         # apply the slice to the overlay ImageItem
+    #         self.is_user_histogram_interaction = False
+    #         overlay_image_item.setImage(overlay_slice)
+    #         # Set the levels to [0, 2] to avoid LUT rescaling based on the slice content
+    #         overlay_image_item.setLevels([0, 2])  # FIXME: during dev
+    #         overlay_image_item.setOpacity(overlay_image_object.alpha)
+    #         overlay_image_item.setLookupTable(overlay_image_object.colormap)
+    #         # self.image_view.updateImage()
 
             # # Manually reapply the LUT of the base image to ensure it doesn't change
             # if self.current_layer_index != 0:
@@ -454,16 +457,17 @@ class Viewport(QWidget):
         """Update the display min and max of the active Image3D object.
         This is the slot for the signal emitted when the user interacts with the histogram widget.
         The histogram widget automatically updates the imageItem, so we also need to update the Image3D object."""
-        if self.is_user_histogram_interaction:
-            # only do this if the user has interacted with the histogram. Not when the histogram is programmatically
-            # updated by another method.
-            if self.current_layer_index is None:
-                # TODO: raise an error or warning - no layer selected
-                return
-            levels = self.image_view.getHistogramWidget().getLevels()
-            self.image3D_obj_stack[self.current_layer_index].display_min = levels[0]
-            self.image3D_obj_stack[self.current_layer_index].display_max = levels[1]
-        # TODO: update Image3D colormap, too?
+        pass
+        # if self.is_user_histogram_interaction:
+        #     # only do this if the user has interacted with the histogram. Not when the histogram is programmatically
+        #     # updated by another method.
+        #     if self.current_layer_index is None:
+        #         # TODO: raise an error or warning - no layer selected
+        #         return
+        #     levels = self.image_view.getHistogramWidget().getLevels()
+        #     self.image3D_obj_stack[self.current_layer_index].display_min = levels[0]
+        #     self.image3D_obj_stack[self.current_layer_index].display_max = levels[1]
+        # # TODO: update Image3D colormap, too?
 
     def _reapply_lut(self):
         # ensure the LUT remains as you defined it
@@ -602,10 +606,10 @@ class Viewport(QWidget):
         histogram = self.image_view.getHistogramWidget()
         is_visible = histogram.isVisible()
         histogram.setVisible(not is_visible)
-        if self.current_layer_index is None:
-            return
-        if self.image3D_obj_stack[self.current_layer_index] is not None:
-            self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.current_layer_index].colormap)
+        # if self.current_layer_index is None:
+        #     return
+        # if self.image3D_obj_stack[self.current_layer_index] is not None:
+        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.current_layer_index].colormap)
             # self.image_view.updateImage()
 
         # self._set_histogram_colormap(self.image3D_obj_stack[self.current_layer_index].colormap)

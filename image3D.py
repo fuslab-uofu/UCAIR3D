@@ -155,17 +155,17 @@ class Image3D:
         """
         if view == ViewDir.AX.dir:
             if 0 <= slice_num < self.num_slices:
-                vol_slice = self.get_z_slice(slice_num)
+                vol_slice = self._get_z_slice(slice_num)
             else:
                 return None
         elif view == ViewDir.SAG.dir:
             if 0 <= slice_num < self.num_cols:
-                vol_slice = self.get_x_slice(slice_num)
+                vol_slice = self._get_x_slice(slice_num)
             else:
                 return None
         elif view == ViewDir.COR.dir:
             if 0 <= slice_num < self.num_rows:
-                vol_slice = self.get_y_slice(slice_num)
+                vol_slice = self._get_y_slice(slice_num)
             else:
                 return None
         else:  # problem
@@ -173,7 +173,7 @@ class Image3D:
 
         return vol_slice
 
-    def get_x_slice(self, slice_num):
+    def _get_x_slice(self, slice_num):
         """ Return a 2D slice along the plane formed by the y and z axes of the volume/image.
             This is a column slice, SAGITTAL.
             If necessary, reorients the resulting slice to account for current display convention and image orientation.
@@ -196,7 +196,7 @@ class Image3D:
             x_slice = None
         return x_slice
 
-    def get_y_slice(self, slice_num):
+    def _get_y_slice(self, slice_num):
         """ Return a 2D slice along the plane formed by the x and z axes of the volume/image.
             This is a row slice, CORONAL
             If necessary, reorients the resulting slice to account for current display convention and image orientation.
@@ -221,7 +221,7 @@ class Image3D:
 
         return y_slice
 
-    def get_z_slice(self, slice_num):
+    def _get_z_slice(self, slice_num):
         """ Returns a 2D slice along the plane formed by the x and y axes of the volume/image.
             This is a slice-slice (haha), AXIAL.
             If necessary, reorients the resulting slice to account for current display convention and image orientation.
