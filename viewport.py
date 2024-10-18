@@ -7,22 +7,6 @@ from PyQt5.QtCore import Qt
 from enumerations import ViewDir
 
 
-class ColorImageView(pg.ImageView):
-    """
-    Wrapper around the ImageView class to create a color lookup
-    table automatically
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.lut = None
-
-    def updateImage(self, autoHistogramRange=True):
-        super().updateImage(autoHistogramRange)
-        if self.lut is not None:
-            self.getImageItem().setLookupTable(self.lut)
-
-
 class Viewport(QWidget):
     """ This class displays one or more 3D images. It is interactive and allows the user to pan, zoom, and scroll
     through images. Multiple images can be stacked on top of each other to create overlays. The user can also paint
@@ -85,7 +69,6 @@ class Viewport(QWidget):
         # layout for the image view and opacity slider ----------
         image_view_layout = QHBoxLayout()
         # the image view widget ----------
-        # self.image_view = ColorImageView()
         self.image_view = pg.ImageView()
         # self.image_view.getHistogramWidget().setVisible(False)
         self.image_view.ui.menuBtn.setVisible(False)  # hide these for now
@@ -124,7 +107,7 @@ class Viewport(QWidget):
         image view. """
         self.image3D_obj_stack = [None] * self.num_vols_allowed
         self.array3D_stack = [None] * self.num_vols_allowed
-        self.array2D_stack = [pg.ImageItem()] * (self.num_vols_allowed)
+        self.array2D_stack = [pg.ImageItem() for _ in range(self.num_vols_allowed)]
         for i in range(0, self.num_vols_allowed):
             self.image_view.view.addItem(self.array2D_stack[i])
         self.num_vols = 0  # keep track of the number of images currently linked to this viewport
@@ -365,19 +348,6 @@ class Viewport(QWidget):
                     # apply the opacity of the Image3D object to the ImageItem
                     main_image.setOpacity(self.image3D_obj_stack[ind].alpha)
                     main_image.setLookupTable(self.image3D_obj_stack[ind].colormap)
-                    # connect the histogram widget to the main image item
-                    # self.image_view.getHistogramWidget().setImageItem(main_image)
-                    # # update the histogram widget with eh colormap of the Image3D object
-                    # hist_widget = self.image_view.ui.histogram
-                    # gradient_editor = hist_widget.gradient
-                    # new_gradient_state = {
-                    #     'ticks': [(0.0, self.image3D_obj_stack[ind].colormap[0]),
-                    #               (0.5, self.image3D_obj_stack[ind].colormap[int(len(self.image3D_obj_stack[ind].colormap) // 2)]),
-                    #               (1.0, self.image3D_obj_stack[ind].colormap[-1])],
-                    #     'mode': 'rgb'
-                    # }
-                    # # apply the new gradient to the GradientEditorItem
-                    # gradient_editor.restoreState(new_gradient_state)
                     # self.image_view.updateImage()
                     self.image_view.getImageItem().getViewBox().invertY(False)
                     self.image_view.getImageItem().getViewBox().invertX(True)
@@ -425,8 +395,6 @@ class Viewport(QWidget):
                     continue
                 else:
                     self._set_overlay_slice(layer_index)
-            # else:
-            #     self.array2D_stack[layer_index].clear()
 
     def _update_overlay_slice(self, layer_index):
         """Update the overlay image with the current slice from the array3D."""
@@ -438,31 +406,11 @@ class Viewport(QWidget):
             # apply the slice to the overlay ImageItem
             self.is_user_histogram_interaction = False
             overlay_image_item.setImage(overlay_slice)
+            # Set the levels to [0, 2] to avoid LUT rescaling based on the slice content
+            overlay_image_item.setLevels([0, 2])  # FIXME: during dev
             overlay_image_item.setOpacity(overlay_image_object.alpha)
             overlay_image_item.setLookupTable(overlay_image_object.colormap)
-            # self.image_view.getHistogramWidget().setImageItem(overlay_image_item)
-            # hist_widget = self.image_view.ui.histogram
-            # gradient_editor = hist_widget.gradient
-            # # apply the colormap of this image to the histogram widget
-            # new_gradient_state = {
-            #     'ticks': [(0.0, overlay_image_object.colormap[0]),
-            #               (0.5,
-            #                overlay_image_object.colormap[int(len(overlay_image_object.colormap) // 2)]),
-            #               (1.0, overlay_image_object.colormap[-1])],
-            #     'mode': 'rgb'
-            # }
-            # gradient_editor.restoreState(new_gradient_state)
-
-            # self.image_view.updateImage()
-
-            # # Manually reapply the LUT of the base image to ensure it doesn't change
-            # if self.current_layer_index != 0:
-            #     base_image_item = self.image_view.getImageItem()  # Assuming the base image is layer 0
-            #     base_image_item.setLookupTable(self.image3D_obj_stack[0].colormap)  # Reapply the base image LUT
-
             self.is_user_histogram_interaction = True
-        # else:
-        #     self.array2D_stack[layer_index].clear()
 
     def _set_overlay_slice(self, layer_index):
         """Update the overlay image with the current slice from the array3D."""
@@ -474,22 +422,10 @@ class Viewport(QWidget):
             # apply the slice to the overlay ImageItem
             self.is_user_histogram_interaction = False
             overlay_image_item.setImage(overlay_slice)
-            # self.image_view.setCurrentIndex(self.current_slice_index)
+            # Set the levels to [0, 2] to avoid LUT rescaling based on the slice content
+            overlay_image_item.setLevels([0, 2])  # FIXME: during dev
             overlay_image_item.setOpacity(overlay_image_object.alpha)
             overlay_image_item.setLookupTable(overlay_image_object.colormap)
-            # self.image_view.getHistogramWidget().setImageItem(overlay_image_item)
-            # hist_widget = self.image_view.ui.histogram
-            # gradient_editor = hist_widget.gradient
-            # # apply the colormap of this image to the histogram widget
-            # new_gradient_state = {
-            #     'ticks': [(0.0, overlay_image_object.colormap[0]),
-            #               (0.5,
-            #                overlay_image_object.colormap[int(len(overlay_image_object.colormap) // 2)]),
-            #               (1.0, overlay_image_object.colormap[-1])],
-            #     'mode': 'rgb'
-            # }
-            # gradient_editor.restoreState(new_gradient_state)
-
             # self.image_view.updateImage()
 
             # # Manually reapply the LUT of the base image to ensure it doesn't change
@@ -513,9 +449,6 @@ class Viewport(QWidget):
         else:
             self.array2D_stack[self.current_layer_index].setOpacity(opacity_value)
             self.image3D_obj_stack[self.current_layer_index].alpha = opacity_value
-
-        # self.image_view.getImageItem().setOpacity(opacity_value)
-        # self.image3D_obj_stack[self.current_layer_index].alpha = opacity_value
 
     def _update_image_object(self):
         """Update the display min and max of the active Image3D object.
@@ -546,13 +479,6 @@ class Viewport(QWidget):
                 else:
                     if self.array2D_stack[ind] is not None:
                         self.array2D_stack[ind].setLookupTable(im.colormap)
-
-        # for i in range(0, self.num_vols_allowed):
-        #     if self.array3D_stack[i] is not None:
-        #         self.array2D_stack[i].setLookupTable(self.image3D_obj_stack[i].colormap)
-        # if self.image3D_obj_stack[0].colormap is not None:
-        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[0].colormap)
-            # self.image_view.updateImage()
 
     def _layer_selection_changed(self, index):
         """Update the layer associated with histogram settings and interactions."""
@@ -684,15 +610,6 @@ class Viewport(QWidget):
 
         # self._set_histogram_colormap(self.image3D_obj_stack[self.current_layer_index].colormap)
         self.opacity_slider.setVisible(not is_visible)
-
-    # def _set_histogram_colormap(self, colormap):
-    #     """ Set the histogram widget's colormap to match the LUT of the current layer. """
-    #     if colormap is not None:
-    #         self.image_view.ui.histogram.setImageItem(self.image_view.getImageItem())
-    #         self.image_view.getImageItem().setLookupTable(colormap)
-    #         self.image_view.updateImage()
-    #
-
 
     # def create_circular_kernel(self, radius):
     #     """Create a circular kernel with the specified radius."""
