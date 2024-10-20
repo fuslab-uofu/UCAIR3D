@@ -42,6 +42,7 @@ class Viewport(QWidget):
         self.layer_selector = QComboBox(self)
         self.layer_selector.addItems([f"Layer {i}" for i in range(self.num_vols_allowed)])
         self.layer_selector.currentIndexChanged.connect(self._layer_selection_changed)
+        self.layer_selector.setVisible(False)
         # top_layout.addWidget(self.layer_selector)
         # add spacing between the buttons and right edge
         top_layout.addStretch()
@@ -70,7 +71,7 @@ class Viewport(QWidget):
         image_view_layout = QHBoxLayout()
         # the image view widget ----------
         self.image_view = pg.ImageView()
-        # self.image_view.getHistogramWidget().setVisible(False)
+        self.image_view.getHistogramWidget().setVisible(False)
         self.image_view.ui.menuBtn.setVisible(False)  # hide these for now
         self.image_view.ui.roiBtn.setVisible(False)  # hide these for now
         image_view_layout.addWidget(self.image_view, stretch=2)
@@ -84,7 +85,7 @@ class Viewport(QWidget):
         self.opacity_slider.valueChanged.connect(self._update_opacity)
         slider_layout.addWidget(self.opacity_slider, alignment=Qt.AlignHCenter)
         image_view_layout.addLayout(slider_layout, stretch=0)
-        # self.opacity_slider.setVisible(False)
+        self.opacity_slider.setVisible(False)
         # add image_view_layout to the main layout
         main_layout.addLayout(image_view_layout)
 
@@ -105,17 +106,21 @@ class Viewport(QWidget):
         the orientation (ViewDir) of this Viewport.
         self.array2D_stack stores the slices (ImageItems) of the overlay image that will be displayed in the 
         image view. """
-        self.image3D_obj_stack = [None] * self.num_vols_allowed
-        self.array3D_stack = [None] * self.num_vols_allowed
-        self.array2D_stack = [pg.ImageItem() for _ in range(self.num_vols_allowed)]
+        self.image3D_obj_stack = [None] * self.num_vols_allowed  # Image3D objects
+        self.array3D_stack = [None] * self.num_vols_allowed  # image data 3D arrays
+        self.array2D_stack = [pg.ImageItem() for _ in range(self.num_vols_allowed)]  # image data 2D arrays (slices)
         for i in range(0, self.num_vols_allowed):
             self.image_view.view.addItem(self.array2D_stack[i])
         self.num_vols = 0  # keep track of the number of images currently linked to this viewport
 
         # FIXME: might not be necessary?
-        self.num_displayed_layers = 0
+        self.num_displayed_images = 0
+
+        # convenience reference to the background image item
+        self.background_image_index = None
+
         # keep track of the current layer for histogram interaction
-        self.current_layer_index = None  # default to the first layer (background)
+        self.current_image_index = None  # default to the first layer (background)
         self.current_slice_index = 0
 
         # # FIXME: temp during dev. These will be set by the main app
@@ -169,18 +174,12 @@ class Viewport(QWidget):
         """Update the stack of 3D images with a new 3D image for this viewPort.
         image = None is allowed and will clear the layer at the specified position."""
 
-        # if self.num_vols == self.num_vols_allowed:
-        #     return
-        # if stack_position is None:
-        #     if self.num_vols == 0:
-        #         return
-        # else:
-
         if stack_position > self.num_vols_allowed:
             # TODO: raise an error or warning - the stack position is out of bounds
             return
+
         self.image3D_obj_stack[stack_position] = image  # not a deep copy, reference to the image3D object
-        self.current_layer_index = stack_position
+        self.current_image_index = stack_position
 
         if image is not None:
             # populate the 3D array stack with the data from this image3D object
@@ -208,7 +207,8 @@ class Viewport(QWidget):
                 self.current_slice_index = int(self.array3D_stack[stack_position].shape[0] // 2)
                 # print(self.id, self.array3D_stack[stack_position].shape, self.current_slice_index)
 
-            # set the aspect ratio of the image view
+            # set the aspect ratio of the image view to match this new image
+            # FIXME: is there a better way to do this? Should this be done in refresh()?
             self.image_view.getView().setAspectLocked(True, ratio=ratio)
         else:
             self.array3D_stack[stack_position] = None
@@ -218,8 +218,11 @@ class Viewport(QWidget):
         self.refresh()
 
     def remove_layer(self, stack_position):
-        # TODO
-        pass
+        self.image3D_obj_stack[stack_position] = None
+        self.array3D_stack[stack_position] = None
+        # self.array2D_stack[stack_position].clear()
+        self.array2D_stack[stack_position] = None
+        self.refresh()
 
     def move_layer_up(self):
         # TODO
@@ -310,38 +313,44 @@ class Viewport(QWidget):
             self.add_marker(x, y, z)
 
     # painting ---------------------------------------------------------------------------------------------------------
-    def toggle_painting_mode(self, _is_painting):
-        """called by external class to toggle painting modes on or off"""
-        if self.current_layer_index is None:
+    def toggle_painting_mode(self, which_layer, _is_painting):
+        """Called by external class to toggle painting mode on or off."""
+        # FIXME: painting should be done on the active layer, not the background?
+        if self.image3D_obj_stack[which_layer] is None:
             # TODO: raise an error or warning - no layer selected
             return
         self.is_painting = _is_painting
         if self.is_painting:
             # Set the kernel (brush) for drawing
             # self.array2D_stack.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
-            if self.current_layer_index == 0:
+            if which_layer == self.background_image_index:
                 self.image_view.imageItem.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
             else:
-                self.array2D_stack[self.current_layer_index].setDrawKernel(self.kernel, mask=None, center=(1, 1),
+                self.array2D_stack[which_layer].setDrawKernel(self.kernel, mask=None, center=(1, 1),
                                                                            mode='set')
         else:
-            # Disable drawing
-            self.array2D_stack[self.current_layer_index].setDrawKernel(None)
+            # disable drawing
+            if which_layer == self.background_image_index:
+                self.image_view.imageItem.setDrawKernel(None)
+            else:
+                self.array2D_stack[which_layer].setDrawKernel(None)
 
     def refresh(self):
         """
-        Should be called when one of the images displayed in the viewport changes. Sets the image item, and connects the histogram
-        widget to the image item. Also updates the overlay images.
+        Should be called when one of the images displayed in the viewport changes. Sets the image item, and connects the
+        histogram widget to the image item. Also updates the overlay images.
         """
+        self.image_view.clear()
         # the image stack may have empty slots, so we need to find the first non-empty image to display
         found_bottom_image = False
-        for ind, im_data in enumerate(self.array3D_stack):
-            if im_data is None:
+        for ind, im_obj in enumerate(self.image3D_obj_stack):
+            if im_obj is None:
                 continue
             else:
                 if not found_bottom_image:
-                    # this is the "bottom" image and will be set as the 3D image item in the image view
-                    im_obj = self.image3D_obj_stack[ind]
+                    # this is the bottom image in the stack and will be set as the 3D background image item in the
+                    # image view
+                    im_data = self.array3D_stack[ind]
                     self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
                     self.image_view.setImage(im_data)
                     main_image = self.image_view.getImageItem()
@@ -355,6 +364,7 @@ class Viewport(QWidget):
                     self.image_view.getImageItem().getViewBox().invertY(False)
                     self.image_view.getImageItem().getViewBox().invertX(True)
                     self.is_user_histogram_interaction = True
+                    self.background_image_index = ind
                     found_bottom_image = True
                 else:
                     # this is an overlay image, so we need to get a slice of it and set it as an overlay
@@ -363,24 +373,24 @@ class Viewport(QWidget):
         self.image_view.setCurrentIndex(self.current_slice_index)
 
         # refresh the combo box with the current layers in the stack.
-        try:
-            # disconnect the slot before making changes
-            self.layer_selector.currentIndexChanged.disconnect(self._layer_selection_changed)
-        except TypeError:
-            # if the slot was not connected, ignore the error
-            pass
-        # clear the combo box
-        self.layer_selector.clear()
-        # add the main background image
-        self.layer_selector.addItem("Background ")
-        # add overlay layers if they exist
-        for i in range(1, self.num_vols_allowed):
-            if self.image3D_obj_stack[i] is not None:
-                self.layer_selector.addItem(f"Overlay {i}")
-            else:
-                self.layer_selector.addItem(f"Empty Layer {i}")
-        # reconnect the slot after making changes
-        self.layer_selector.currentIndexChanged.connect(self._layer_selection_changed)
+        # try:
+        #     # disconnect the slot before making changes
+        #     self.layer_selector.currentIndexChanged.disconnect(self._layer_selection_changed)
+        # except TypeError:
+        #     # if the slot was not connected, ignore the error
+        #     pass
+        # # clear the combo box
+        # self.layer_selector.clear()
+        # # add the main background image
+        # self.layer_selector.addItem("Background ")
+        # # add overlay layers if they exist
+        # for i in range(1, self.num_vols_allowed):
+        #     if self.image3D_obj_stack[i] is not None:
+        #         self.layer_selector.addItem(f"Overlay {i}")
+        #     else:
+        #         self.layer_selector.addItem(f"Empty Layer {i}")
+        # # reconnect the slot after making changes
+        # self.layer_selector.currentIndexChanged.connect(self._layer_selection_changed)
 
         self.image_view.show()
 
@@ -390,14 +400,15 @@ class Viewport(QWidget):
 
     def _update_overlays(self):
         """Update the overlay image with the corresponding slice from the array3D."""
-        found_bottom_overlay = False
-        for layer_index in range(0, self.num_vols_allowed):
-            if self.array3D_stack[layer_index] is not None:
-                if not found_bottom_overlay:
-                    found_bottom_overlay = True
-                    continue
-                else:
-                    self._update_overlay_slice(layer_index)
+        if self.background_image_index == self.num_vols_allowed - 1:
+            # there are no overlay images
+            return
+        # loop through images in the stack above the background image
+        for layer_index in range(self.background_image_index+1, self.num_vols_allowed):
+            if self.image3D_obj_stack[layer_index] is not None:
+                self._update_overlay_slice(layer_index)
+            else:
+                self.array2D_stack[layer_index].clear()
 
     def _update_overlay_slice(self, layer_index):
         """Update the overlay image with the current slice from the array3D."""
@@ -432,7 +443,7 @@ class Viewport(QWidget):
     #         # self.image_view.updateImage()
 
             # # Manually reapply the LUT of the base image to ensure it doesn't change
-            # if self.current_layer_index != 0:
+            # if self.current_image_index != 0:
             #     base_image_item = self.image_view.getImageItem()  # Assuming the base image is layer 0
             #     base_image_item.setLookupTable(self.image3D_obj_stack[0].colormap)  # Reapply the base image LUT
 
@@ -442,16 +453,16 @@ class Viewport(QWidget):
 
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""
-        if self.current_layer_index is None:
+        if self.current_image_index is None:
             # TODO: raise an error or warning - no layer selected
             return
         opacity_value = value / 100  # convert slider value to a range of 0.0 - 1.0
-        if self.current_layer_index == 0:
+        if self.current_image_index == 0:
             self.image_view.getImageItem().setOpacity(opacity_value)
             self.image3D_obj_stack[0].alpha = opacity_value
         else:
-            self.array2D_stack[self.current_layer_index].setOpacity(opacity_value)
-            self.image3D_obj_stack[self.current_layer_index].alpha = opacity_value
+            self.array2D_stack[self.current_image_index].setOpacity(opacity_value)
+            self.image3D_obj_stack[self.current_image_index].alpha = opacity_value
 
     def _update_image_object(self):
         """Update the display min and max of the active Image3D object.
@@ -461,12 +472,12 @@ class Viewport(QWidget):
         # if self.is_user_histogram_interaction:
         #     # only do this if the user has interacted with the histogram. Not when the histogram is programmatically
         #     # updated by another method.
-        #     if self.current_layer_index is None:
+        #     if self.current_image_index is None:
         #         # TODO: raise an error or warning - no layer selected
         #         return
         #     levels = self.image_view.getHistogramWidget().getLevels()
-        #     self.image3D_obj_stack[self.current_layer_index].display_min = levels[0]
-        #     self.image3D_obj_stack[self.current_layer_index].display_max = levels[1]
+        #     self.image3D_obj_stack[self.current_image_index].display_min = levels[0]
+        #     self.image3D_obj_stack[self.current_image_index].display_max = levels[1]
         # # TODO: update Image3D colormap, too?
 
     def _reapply_lut(self):
@@ -486,7 +497,7 @@ class Viewport(QWidget):
 
     def _layer_selection_changed(self, index):
         """Update the layer associated with histogram settings and interactions."""
-        self.current_layer_index = index
+        self.current_image_index = index
 
         if index == 0:
             # set the histogram to display stats for the main image (3D MR image)
@@ -529,8 +540,8 @@ class Viewport(QWidget):
         if self.is_painting:
             # Get current slice from ImageView
             current_slice = int(self.image_view.currentIndex)
-            print(current_slice)
-        else:
+            print(f"Current slice {current_slice}")
+        elif self.is_marking:
             if event.button() == Qt.LeftButton:
                 img_item = self.image_view.getImageItem()
                 pos = event.pos()
@@ -542,13 +553,13 @@ class Viewport(QWidget):
                     y = int(pos.y())
                     z = int(self.image_view.currentIndex)  # Get the current slice index
 
-                    # Ensure coordinates are within image bounds
+                    # ensure coordinates are within image bounds
                     if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
                         self.add_marker(x, y)
 
                     print(f"Point added at: x={x}, y={y}, z={z}")
 
-        # Propagate the event for any further processing
+        # propagate the event for any further processing
         event.ignore()
 
     def _toggle_crosshairs(self):
@@ -558,26 +569,44 @@ class Viewport(QWidget):
         self.vertical_line.setVisible(self.show_crosshairs)
 
     def _mouse_move(self, pos):
-        if self.current_layer_index is None:
+        if self.background_image_index is None:
             return
-        img_item = self.image_view.getImageItem()
-        if self.image3D_obj_stack[self.current_layer_index] is None:
+        if self.image3D_obj_stack[self.background_image_index] is None:
             return
+        # use the background image to get the coordinates
+        # the background image is always the image view's image item
+        # ideally, this would be the high-res medical image, but user is allowed to load overlays (heatmap,
+        # segementation, etc.) without having a base layer loaded.
+        img_item = self.image_view.getImageItem()  # should be same image referenced by self.background_image_index
         if img_item is not None and img_item.sceneBoundingRect().contains(pos):
-            # Transform the scene coordinates to image coordinates
+            # transform the scene coordinates to image coordinates
             mouse_point = img_item.mapFromScene(pos)
-            if self.image3D_obj_stack[self.current_layer_index] is None:
+            if self.image3D_obj_stack[self.background_image_index] is None:
                 return
-            img_shape = self.image3D_obj_stack[self.current_layer_index].data.shape
+            # FIXME: account for view direction?
+            img_shape = self.image3D_obj_stack[self.background_image_index].data.shape
             x = int(mouse_point.x())
             y = int(mouse_point.y())
-            z = int(self.image_view.currentIndex)  # Get the current slice index
+            z = int(self.image_view.currentIndex)  # get the current slice index (same as self.current_slice_index)
 
-            # Ensure coordinates are within image bounds
             if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
-                voxel_value = self.image3D_obj_stack[self.current_layer_index].data[x, y, z]
-                coordinates_text = "Coordinates: x={:3d}, y={:3d}, z={:3d}, Voxel Value: {:4.2f}".format(x, y, z,
-                                                                                                         voxel_value)
+                # if coordinates are within image bounds
+                voxel_values = []
+                voxel_values.append(self.image3D_obj_stack[self.background_image_index].data[x, y, z])
+                # also display voxel value of any overlay images
+                image_objs = [im for im in self.image3D_obj_stack if im is not None]
+                if len(image_objs) > 1:
+                    for i in range(1, len(image_objs)):
+                        voxel_values.append(image_objs[i].data[x, y, z])
+
+                # start with the coordinates
+                coordinates_text = "x={:3d}, y={:3d}, z={:3d}".format(x, y, z)
+                # append voxel values for each image
+                for value in voxel_values:
+                    coordinates_text += ", {:4.2f} ".format(value)
+
+                # coordinates_text = "Coordinates: x={:3d}, y={:3d}, z={:3d}, Voxel Value: {:4.2f}".format(x, y, z,
+                #                                                                                          voxel_values[0])
                 self.coordinates_label.setText(coordinates_text)
                 if self.dragging_marker:
                     pass
@@ -606,13 +635,13 @@ class Viewport(QWidget):
         histogram = self.image_view.getHistogramWidget()
         is_visible = histogram.isVisible()
         histogram.setVisible(not is_visible)
-        # if self.current_layer_index is None:
+        # if self.current_image_index is None:
         #     return
-        # if self.image3D_obj_stack[self.current_layer_index] is not None:
-        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.current_layer_index].colormap)
+        # if self.image3D_obj_stack[self.current_image_index] is not None:
+        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.current_image_index].colormap)
             # self.image_view.updateImage()
 
-        # self._set_histogram_colormap(self.image3D_obj_stack[self.current_layer_index].colormap)
+        # self._set_histogram_colormap(self.image3D_obj_stack[self.current_image_index].colormap)
         self.opacity_slider.setVisible(not is_visible)
 
     # def create_circular_kernel(self, radius):
