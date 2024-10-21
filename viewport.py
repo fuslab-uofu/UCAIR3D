@@ -5,6 +5,7 @@ from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
 
 from enumerations import ViewDir
+from paint_brush import PaintBrush
 
 
 class Viewport(QWidget):
@@ -15,16 +16,17 @@ class Viewport(QWidget):
     The calling class must also provide the maximum number of image allowed in the stack.
     A viewport is a subclass of QWidget and can be added to a layout in a QMainWindow.
     """
+
     def __init__(self, parent, _id, _view_dir, _num_vols, _zoom_method=None, _pan_method=None, _window_method=None):
         super().__init__()
 
         self.parent = parent
         self.id = _id
-        self.view_dir = _view_dir.dir             # ViewDir.AX (axial), ViewDir.COR (coronal), ViewDir.SAG (sagittal)
-        self.num_vols_allowed = _num_vols         # number of images (layers) to display
-        self.zoom_method = _zoom_method           # TODO: future implementation, custom zoom method
-        self.pan_method = _pan_method             # TODO: future implementation, custom pan method
-        self.window_method = _window_method       # TODO: future implementation, custom method for windowing
+        self.view_dir = _view_dir.dir  # ViewDir.AX (axial), ViewDir.COR (coronal), ViewDir.SAG (sagittal)
+        self.num_vols_allowed = _num_vols  # number of images (layers) to display
+        self.zoom_method = _zoom_method  # TODO: future implementation, custom zoom method
+        self.pan_method = _pan_method  # TODO: future implementation, custom pan method
+        self.window_method = _window_method  # TODO: future implementation, custom method for windowing
 
         # initialize widgets and their slots -------------------------------------
         # the main layout for this widget ----------
@@ -119,34 +121,14 @@ class Viewport(QWidget):
         # convenience reference to the background image item
         self.background_image_index = None
 
-        # keep track of the current layer for histogram interaction
-        self.current_image_index = None  # default to the first layer (background)
+        # keep track of the active layer for histogram, colormap, and opacity settings interaction
+        self.active_image_index = None  # default to the first layer (background)
+        self.paint_layer_index = None  # the layer that is currently being painted on
         self.current_slice_index = 0
-
-        # # FIXME: temp during dev. These will be set by the main app
-        # self.overlay_lut = np.array(
-        #     [[0, 0, 0, 0],  # black
-        #      [228, 25, 27, 255],  # red
-        #      [54, 126, 184, 255],  # blue
-        #      [76, 175, 74, 255],  # green
-        #      [151, 77, 163, 255],  # purple
-        #      [255, 127, 0, 255],  # orange
-        #      [255, 255, 51, 255],  # yellow
-        #      [165, 85, 40, 255],  # brown
-        #      [246, 128, 191, 255]],  # pink
-        #     dtype='uint8')
 
         # interactive painting
         self.is_painting = False
-        # create a brush (kernel) to use for painting. Square, 3x3
-        # TODO: implement PaintBrush class to handle different brush shapes, sizes, and colors
-        self.kernel = np.array([
-            [1, 1, 1],
-            [1, 1, 1],
-            [1, 1, 1]
-        ])
-        # radius = 2
-        # self.kernel = self.create_circular_kernel(radius)
+        self.paint_brush = PaintBrush()
 
         # interactive marker placement
         self.is_marking = False
@@ -179,13 +161,14 @@ class Viewport(QWidget):
             return
 
         self.image3D_obj_stack[stack_position] = image  # not a deep copy, reference to the image3D object
-        self.current_image_index = stack_position
+        self.active_image_index = stack_position
 
         if image is not None:
             # populate the 3D array stack with the data from this image3D object
             if self.view_dir == ViewDir.AX.dir:
                 # axial view: transpose to (z, x, y)
-                self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data, (2, 0, 1))
+                self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
+                                                                  (2, 0, 1))
                 ratio = image.dy / image.dx
                 # start at middle slice
                 self.current_slice_index = int(self.array3D_stack[stack_position].shape[0] // 2)
@@ -193,7 +176,8 @@ class Viewport(QWidget):
             elif self.view_dir == ViewDir.COR.dir:
                 # TODO: orient image for coronal view
                 # coronal view: transpose to (y, x, z)
-                self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data, (1, 0, 2))
+                self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
+                                                                  (1, 0, 2))
                 ratio = image.dz / image.dx
                 # start at middle slice
                 self.current_slice_index = int(self.array3D_stack[stack_position].shape[0] // 2)
@@ -201,7 +185,8 @@ class Viewport(QWidget):
             else:  # "SAG"
                 # TODO: orient image for sagittal view
                 # sagittal view: transpose to (x, y, z)
-                self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data, (0, 1, 2))
+                self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
+                                                                  (0, 1, 2))
                 ratio = image.dz / image.dy
                 # start at middle slice
                 self.current_slice_index = int(self.array3D_stack[stack_position].shape[0] // 2)
@@ -213,7 +198,7 @@ class Viewport(QWidget):
         else:
             self.array3D_stack[stack_position] = None
 
-       # TODO: update the layer selection combo and active layer
+        # TODO: update the layer selection combo and active layer
 
         self.refresh()
 
@@ -319,21 +304,28 @@ class Viewport(QWidget):
         if self.image3D_obj_stack[which_layer] is None:
             # TODO: raise an error or warning - no layer selected
             return
+        self.paint_layer_index = which_layer
         self.is_painting = _is_painting
+
         if self.is_painting:
-            # Set the kernel (brush) for drawing
-            # self.array2D_stack.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
-            if which_layer == self.background_image_index:
-                self.image_view.imageItem.setDrawKernel(self.kernel, mask=None, center=(1, 1), mode='set')
-            else:
-                self.array2D_stack[which_layer].setDrawKernel(self.kernel, mask=None, center=(1, 1),
-                                                                           mode='set')
+            # enable painting on this layer
+            self._enable_paint_brush(self.paint_layer_index)
         else:
-            # disable drawing
-            if which_layer == self.background_image_index:
-                self.image_view.imageItem.setDrawKernel(None)
-            else:
-                self.array2D_stack[which_layer].setDrawKernel(None)
+            # disable painting on this layer
+            self._disable_paint_brush(self.paint_layer_index)
+
+    def update_paint_brush(self, brush):
+        """Update the paint brush settings. Called by external class to update the paint brush settings,
+        applies updated brush to current paint layer, if is_painting."""
+        self.paint_brush.set_size(brush.size)
+        self.paint_brush.set_value(brush.value)
+        self.paint_brush.set_shape(brush.shape)
+
+        if self.paint_layer_index is None:
+            return
+
+        if self.is_painting:
+            self._enable_paint_brush(self.paint_layer_index)
 
     def refresh(self):
         """
@@ -404,7 +396,7 @@ class Viewport(QWidget):
             # there are no overlay images
             return
         # loop through images in the stack above the background image
-        for layer_index in range(self.background_image_index+1, self.num_vols_allowed):
+        for layer_index in range(self.background_image_index + 1, self.num_vols_allowed):
             if self.image3D_obj_stack[layer_index] is not None:
                 self._update_overlay_slice(layer_index)
             else:
@@ -426,24 +418,24 @@ class Viewport(QWidget):
             overlay_image_item.setLookupTable(overlay_image_object.colormap)
             self.is_user_histogram_interaction = True
 
-    # def _set_overlay_slice(self, layer_index):
-    #     """Set the overlay image with the current slice from the array3D."""
-    #     if self.array3D_stack[layer_index] is not None:
-    #         overlay_image_object = self.image3D_obj_stack[layer_index]
-    #         overlay_data = self.array3D_stack[layer_index]
-    #         overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
-    #         overlay_image_item = self.array2D_stack[layer_index]
-    #         # apply the slice to the overlay ImageItem
-    #         self.is_user_histogram_interaction = False
-    #         overlay_image_item.setImage(overlay_slice)
-    #         # Set the levels to [0, 2] to avoid LUT rescaling based on the slice content
-    #         overlay_image_item.setLevels([0, 2])  # FIXME: during dev
-    #         overlay_image_item.setOpacity(overlay_image_object.alpha)
-    #         overlay_image_item.setLookupTable(overlay_image_object.colormap)
-    #         # self.image_view.updateImage()
+            # def _set_overlay_slice(self, layer_index):
+            #     """Set the overlay image with the current slice from the array3D."""
+            #     if self.array3D_stack[layer_index] is not None:
+            #         overlay_image_object = self.image3D_obj_stack[layer_index]
+            #         overlay_data = self.array3D_stack[layer_index]
+            #         overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
+            #         overlay_image_item = self.array2D_stack[layer_index]
+            #         # apply the slice to the overlay ImageItem
+            #         self.is_user_histogram_interaction = False
+            #         overlay_image_item.setImage(overlay_slice)
+            #         # Set the levels to [0, 2] to avoid LUT rescaling based on the slice content
+            #         overlay_image_item.setLevels([0, 2])  # FIXME: during dev
+            #         overlay_image_item.setOpacity(overlay_image_object.alpha)
+            #         overlay_image_item.setLookupTable(overlay_image_object.colormap)
+            #         # self.image_view.updateImage()
 
             # # Manually reapply the LUT of the base image to ensure it doesn't change
-            # if self.current_image_index != 0:
+            # if self.active_image_index != 0:
             #     base_image_item = self.image_view.getImageItem()  # Assuming the base image is layer 0
             #     base_image_item.setLookupTable(self.image3D_obj_stack[0].colormap)  # Reapply the base image LUT
 
@@ -453,16 +445,35 @@ class Viewport(QWidget):
 
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""
-        if self.current_image_index is None:
+        if self.active_image_index is None:
             # TODO: raise an error or warning - no layer selected
             return
         opacity_value = value / 100  # convert slider value to a range of 0.0 - 1.0
-        if self.current_image_index == 0:
+        if self.active_image_index == 0:
             self.image_view.getImageItem().setOpacity(opacity_value)
             self.image3D_obj_stack[0].alpha = opacity_value
         else:
-            self.array2D_stack[self.current_image_index].setOpacity(opacity_value)
-            self.image3D_obj_stack[self.current_image_index].alpha = opacity_value
+            self.array2D_stack[self.active_image_index].setOpacity(opacity_value)
+            self.image3D_obj_stack[self.active_image_index].alpha = opacity_value
+
+    def _enable_paint_brush(self, which_layer):
+        """Enable or refresh the paint brush on the specified layer."""
+        if self.image3D_obj_stack[which_layer] is None:
+            return
+        if which_layer == self.background_image_index:
+            self.image_view.imageItem.setDrawKernel(
+                self.paint_brush.kernel, mask=None, center=self.paint_brush.center, mode='set')
+        else:
+            self.array2D_stack[which_layer].setDrawKernel(
+                self.paint_brush.kernel, mask=None, center=self.paint_brush.center, mode='set')
+
+    def _disable_paint_brush(self, which_layer):
+        if self.image3D_obj_stack[which_layer] is None:
+            return
+        if which_layer == self.background_image_index:
+            self.image_view.imageItem.setDrawKernel(None)
+        else:
+            self.array2D_stack[which_layer].setDrawKernel(None)
 
     def _update_image_object(self):
         """Update the display min and max of the active Image3D object.
@@ -472,12 +483,12 @@ class Viewport(QWidget):
         # if self.is_user_histogram_interaction:
         #     # only do this if the user has interacted with the histogram. Not when the histogram is programmatically
         #     # updated by another method.
-        #     if self.current_image_index is None:
+        #     if self.active_image_index is None:
         #         # TODO: raise an error or warning - no layer selected
         #         return
         #     levels = self.image_view.getHistogramWidget().getLevels()
-        #     self.image3D_obj_stack[self.current_image_index].display_min = levels[0]
-        #     self.image3D_obj_stack[self.current_image_index].display_max = levels[1]
+        #     self.image3D_obj_stack[self.active_image_index].display_min = levels[0]
+        #     self.image3D_obj_stack[self.active_image_index].display_max = levels[1]
         # # TODO: update Image3D colormap, too?
 
     def _reapply_lut(self):
@@ -497,7 +508,7 @@ class Viewport(QWidget):
 
     def _layer_selection_changed(self, index):
         """Update the layer associated with histogram settings and interactions."""
-        self.current_image_index = index
+        self.active_image_index = index
 
         if index == 0:
             # set the histogram to display stats for the main image (3D MR image)
@@ -635,13 +646,13 @@ class Viewport(QWidget):
         histogram = self.image_view.getHistogramWidget()
         is_visible = histogram.isVisible()
         histogram.setVisible(not is_visible)
-        # if self.current_image_index is None:
+        # if self.active_image_index is None:
         #     return
-        # if self.image3D_obj_stack[self.current_image_index] is not None:
-        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.current_image_index].colormap)
-            # self.image_view.updateImage()
+        # if self.image3D_obj_stack[self.active_image_index] is not None:
+        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.active_image_index].colormap)
+        # self.image_view.updateImage()
 
-        # self._set_histogram_colormap(self.image3D_obj_stack[self.current_image_index].colormap)
+        # self._set_histogram_colormap(self.image3D_obj_stack[self.active_image_index].colormap)
         self.opacity_slider.setVisible(not is_visible)
 
     # def create_circular_kernel(self, radius):
