@@ -1,7 +1,9 @@
 import numpy as np
 import pyqtgraph as pg
+import re
+
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider, QComboBox
-from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtGui import QIcon, QFont, QCursor
 from PyQt5.QtCore import Qt
 
 from enumerations import ViewDir
@@ -310,9 +312,11 @@ class Viewport(QWidget):
         if self.is_painting:
             # enable painting on this layer
             self._enable_paint_brush(self.paint_layer_index)
+            self.setCursor(QCursor(Qt.CrossCursor))
         else:
             # disable painting on this layer
             self._disable_paint_brush(self.paint_layer_index)
+            self.setCursor(QCursor(Qt.ArrowCursor))
 
     def update_paint_brush(self, brush):
         """Update the paint brush settings. Called by external class to update the paint brush settings,
@@ -400,7 +404,17 @@ class Viewport(QWidget):
             if self.image3D_obj_stack[layer_index] is not None:
                 self._update_overlay_slice(layer_index)
             else:
-                self.array2D_stack[layer_index].clear()
+                if self.array2D_stack[layer_index] is not None:
+                    self.array2D_stack[layer_index].clear()
+
+        # coordinates_text = "x={:3d}, y={:3d}, z={:3d}".format(x, y, z)
+        coordinates_text = self.coordinates_label.text()
+        if len(coordinates_text) > 0:
+            pattern = r"x=\s*\d+,\s*y=\s*\d+,\s*z=\s*(\d+)"
+            new_z = self.image_view.currentIndex
+            # substitute the new z value
+            new_string = re.sub(pattern, lambda m: m.group(0).replace(m.group(1), f"{new_z:3d}"), coordinates_text)
+            self.coordinates_label.setText(new_string)
 
     def _update_overlay_slice(self, layer_index):
         """Update the overlay image with the current slice from the array3D."""
