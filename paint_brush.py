@@ -18,14 +18,24 @@ class PaintBrush:
         self._update_kernel()
 
     def set_size(self, size):
-        """Set the size of the paint brush."""
+        """Set the size of the paint brush. For square brushes, the size is the width/height of the kernel.
+        For circular brushes, the size is the diameter of the circle."""
         self.size = size
         self._update_kernel()
+
+    def get_size(self):
+        """Get the size of the paint brush. For square brushes, the size is the width/height of the kernel.
+        For circular brushes, the size is the diameter of the circle."""
+        return self.size
 
     def set_value(self, value):
         """Set the value of the paint."""
         self.value = value
         self._update_kernel()
+
+    def get_value(self):
+        """Get the value of the paint."""
+        return self.value
 
     def set_shape(self, shape):
         """Set the shape of the paint brush."""
@@ -46,6 +56,7 @@ class PaintBrush:
             pass
 
     # TODO: Create a circular mask to simulate a circular brush
+    # could be done by using the mask argument of setDrawKernel. Only circular shape of kernel is "active"
 
 # from Kazem
 #         # creating brushes

@@ -4,7 +4,7 @@ import re
 
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider, QComboBox
 from PyQt5.QtGui import QIcon, QFont, QCursor
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QEvent
 
 from enumerations import ViewDir
 from paint_brush import PaintBrush
@@ -75,6 +75,9 @@ class Viewport(QWidget):
         image_view_layout = QHBoxLayout()
         # the image view widget ----------
         self.image_view = pg.ImageView()
+        self.original_mouse_press = self.image_view.getView().scene().mousePressEvent
+        self.original_mouse_release = self.image_view.getView().scene().mouseReleaseEvent
+        self.original_mouse_move = self.image_view.getView().scene().mouseMoveEvent
         self.image_view.getHistogramWidget().setVisible(False)
         self.image_view.ui.menuBtn.setVisible(False)  # hide these for now
         self.image_view.ui.roiBtn.setVisible(False)  # hide these for now
@@ -115,6 +118,10 @@ class Viewport(QWidget):
         self.array2D_stack = [pg.ImageItem() for _ in range(self.num_vols_allowed)]  # image data 2D arrays (slices)
         for i in range(0, self.num_vols_allowed):
             self.image_view.view.addItem(self.array2D_stack[i])
+        # add a canvas mask for painting
+        # self.imageItem3D_canvas = pg.ImageItem()
+        self.imageItem2D_canvas = pg.ImageItem()
+        self.image_view.view.addItem(self.imageItem2D_canvas)
         self.num_vols = 0  # keep track of the number of images currently linked to this viewport
 
         # FIXME: might not be necessary?
@@ -122,7 +129,6 @@ class Viewport(QWidget):
 
         # convenience reference to the background image item
         self.background_image_index = None
-
         # keep track of the active layer for histogram, colormap, and opacity settings interaction
         self.active_image_index = None  # default to the first layer (background)
         self.paint_layer_index = None  # the layer that is currently being painted on
@@ -130,25 +136,35 @@ class Viewport(QWidget):
 
         # interactive painting
         self.is_painting = False
+        self.is_erasing = False
         self.paint_brush = PaintBrush()
 
         # interactive marker placement
         self.is_marking = False
+        self.is_dragging_marker = False
         self.markers = []  # this will be a list of markers
         self.selected_marker = None
         self.dragging_marker = None
 
         # differentiate between user interacting with histogram widget and histogram updated by the viewport
         self.is_user_histogram_interaction = True
-
-        # connect the mouse move event to the image view
-        self.image_view.getView().scene().sigMouseMoved.connect(self._mouse_move)
-        # when the timeLine position changes, update the overlays
-        self.image_view.timeLine.sigPositionChanged.connect(lambda: self._update_overlays())
-        # connect the mouse click event to the image view
-        self.image_view.imageItem.mouseClickEvent = self._mouse_click_event
         self.image_view.getHistogramWidget().sigLevelChangeFinished.connect(self._update_image_object)
         self.image_view.getHistogramWidget().sigLookupTableChanged.connect(self._reapply_lut)
+
+        # connect the mouse move event to the graphics scene
+        self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
+        # self.image_view.getView().scene().sigMouseMoved.connect(self._mouse_move)
+
+        # connect the mouse click event to the graphics scene
+        self.image_view.getView().scene().mousePressEvent = self._mouse_press
+        # self.image_view.imageItem.mousePressEvent = self._mouse_press
+
+        # connect the mouse release event to the graphics scene
+        self.image_view.getView().scene().mouseReleaseEvent = self._mouse_release
+        # self.image_view.imageItem.mouseReleaseEvent = self._mouse_release
+
+        # when the timeLine position changes, update the overlays
+        self.image_view.timeLine.sigPositionChanged.connect(lambda: self._update_overlays())
 
     #  -----------------------------------------------------------------------------------------------------------------
     #  "Public" methods API --------------------------------------------------------------------------------------------
@@ -302,7 +318,7 @@ class Viewport(QWidget):
     # painting ---------------------------------------------------------------------------------------------------------
     def toggle_painting_mode(self, which_layer, _is_painting):
         """Called by external class to toggle painting mode on or off."""
-        # FIXME: painting should be done on the active layer, not the background?
+        # painting should only be done on the layer that is identified by which_layer
         if self.image3D_obj_stack[which_layer] is None:
             # TODO: raise an error or warning - no layer selected
             return
@@ -311,7 +327,7 @@ class Viewport(QWidget):
 
         if self.is_painting:
             # enable painting on this layer
-            self._enable_paint_brush(self.paint_layer_index)
+            self._update_canvas()
             self.setCursor(QCursor(Qt.CrossCursor))
         else:
             # disable painting on this layer
@@ -325,11 +341,10 @@ class Viewport(QWidget):
         self.paint_brush.set_value(brush.value)
         self.paint_brush.set_shape(brush.shape)
 
-        if self.paint_layer_index is None:
-            return
-
-        if self.is_painting:
-            self._enable_paint_brush(self.paint_layer_index)
+        # if self.paint_layer_index is None:
+        #     return
+        # if self.is_painting:
+        #     self._update_canvas()
 
     def refresh(self):
         """
@@ -337,6 +352,7 @@ class Viewport(QWidget):
         histogram widget to the image item. Also updates the overlay images.
         """
         self.image_view.clear()
+
         # the image stack may have empty slots, so we need to find the first non-empty image to display
         found_bottom_image = False
         for ind, im_obj in enumerate(self.image3D_obj_stack):
@@ -364,7 +380,9 @@ class Viewport(QWidget):
                     found_bottom_image = True
                 else:
                     # this is an overlay image, so we need to get a slice of it and set it as an overlay
-                    self._update_overlay_slice(ind)
+                    self._update_overlay_slice(ind)  # uses self.current_slice_index
+
+        # self._update_canvas() # uses self.current_slice_index
 
         self.image_view.setCurrentIndex(self.current_slice_index)
 
@@ -395,9 +413,9 @@ class Viewport(QWidget):
     #  -----------------------------------------------------------------------------------------------------------------
 
     def _update_overlays(self):
-        """Update the overlay image with the corresponding slice from the array3D."""
+        """Update the overlay image(s) with the corresponding slice from the array3D."""
         if self.background_image_index == self.num_vols_allowed - 1:
-            # there are no overlay images
+            # the bottom image is at the top of the stack - there are no overlay images
             return
         # loop through images in the stack above the background image
         for layer_index in range(self.background_image_index + 1, self.num_vols_allowed):
@@ -406,8 +424,9 @@ class Viewport(QWidget):
             else:
                 if self.array2D_stack[layer_index] is not None:
                     self.array2D_stack[layer_index].clear()
+        # self._update_canvas()
 
-        # coordinates_text = "x={:3d}, y={:3d}, z={:3d}".format(x, y, z)
+        # update coordinates to reflect the current slice (so it updates without needing to move the mouse)
         coordinates_text = self.coordinates_label.text()
         if len(coordinates_text) > 0:
             pattern = r"x=\s*\d+,\s*y=\s*\d+,\s*z=\s*(\d+)"
@@ -457,6 +476,56 @@ class Viewport(QWidget):
         # else:
         #     self.array2D_stack[layer_index].clear()
 
+    def _update_canvas(self):
+        """Update the canvas for painting. Masks the painting area using allowed values."""
+        if self.image3D_obj_stack[self.paint_layer_index] is None or self.array3D_stack[self.paint_layer_index] is None:
+            # FIXME: raise an error or warning?
+            return
+
+        if not self.is_painting:
+            # TODO APPLY the mask to the paint image
+            self.imageItem2D_canvas.clear()
+
+        # mask the paint image to create a canvas for painting
+        paint_image_object = self.image3D_obj_stack[self.paint_layer_index]
+        if hasattr(paint_image_object, 'get_canvas_labels'):
+            allowed_values = np.array(paint_image_object.get_canvas_labels())  # , dtype=canvas_slice.dtype.type
+            if allowed_values is None:
+                return
+            # paint_value = self.paint_brush.get_value()  # Value to paint with
+            paint_value = self.paint_brush.get_value()  # canvas_slice.dtype.type(
+
+            # get the current slice of the paint image
+            if self.paint_layer_index == self.background_image_index:
+                paint_image_slice = self.image_view.getImageItem().image
+            else:
+                paint_image_slice = self.array2D_stack[self.paint_layer_index].image
+
+            colors = [
+                (255, 255, 255, 0),  # white for 0
+                (255, 0, 0, 255),  # red for 1
+                (0, 255, 0, 255),  # green for 2
+                (0, 0, 255, 255),  # blue for 3
+                (255, 255, 0, 255)  # yellow for 4
+            ]
+
+            # masked canvas: 0 where paint is allowed, -1 * paint_value where it’s not allowed
+            temp_mask = np.where(np.isin(paint_image_slice, allowed_values), 0, (-1 * paint_value))
+            self.imageItem2D_canvas.setImage(temp_mask)
+            # mask_lookup_table = paint_image_object.colormap
+            # # self.imageItem2D_canvas.setLookupTable(mask_lookup_table)
+            color_map = pg.ColorMap(pos=np.linspace(0, 1, 5), color=colors)
+            self.imageItem2D_canvas.setColorMap(color_map)
+            self.imageItem2D_canvas.setDrawKernel(self.paint_brush.kernel, mask=None, center=self.paint_brush.center,
+                                                  mode='add')
+
+            # FIXME: here, we need to fiddle with the colormap to make all but the paint_value transparent
+            # color_map = pg.ColorMap(pos=np.linspace(0, 1, 9), color=canvas_image_object.colormap)
+            # self.imageItem2D_canvas.setColorMap(color_map)
+
+            # self.imageItem2D_canvas.setDrawKernel(self.paint_brush.kernel, mask=None, center=self.paint_brush.center,
+            #                                    mode='add')
+
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""
         if self.active_image_index is None:
@@ -472,14 +541,15 @@ class Viewport(QWidget):
 
     def _enable_paint_brush(self, which_layer):
         """Enable or refresh the paint brush on the specified layer."""
-        if self.image3D_obj_stack[which_layer] is None:
+        if self.image3D_obj_stack[which_layer] is None or self.array3D_stack[which_layer] is None:
             return
         if which_layer == self.background_image_index:
-            self.image_view.imageItem.setDrawKernel(
-                self.paint_brush.kernel, mask=None, center=self.paint_brush.center, mode='set')
+            canvas_image = self.image_view.imageItem
         else:
-            self.array2D_stack[which_layer].setDrawKernel(
-                self.paint_brush.kernel, mask=None, center=self.paint_brush.center, mode='set')
+            canvas_image = self.array2D_stack[which_layer]
+
+        self.paint_layer_index = which_layer
+        self._update_canvas()
 
     def _disable_paint_brush(self, which_layer):
         if self.image3D_obj_stack[which_layer] is None:
@@ -488,6 +558,58 @@ class Viewport(QWidget):
             self.image_view.imageItem.setDrawKernel(None)
         else:
             self.array2D_stack[which_layer].setDrawKernel(None)
+        # TODO: save the painted data to the Image3D object
+
+    def _apply_brush(self, x, y, painting):
+        """
+        :param x:
+        :param y:
+        :param painting:
+        :return:
+        Apply the current paint brush to the canvas image at the specified (x, y) coordinates.
+        """
+        # this method written by Kazem (thank you!)
+        # FIXME during dev
+        self.paint_layer_index = 2
+
+        data = self.array3D_stack[self.paint_layer_index]
+        data_slice = data[int(self.image_view.currentIndex), :, :]
+
+        # Define the range for the brush area
+        half_brush = self.paint_brush.get_size() // 2
+        x_start = max(0, x - half_brush)
+        x_end = min(data_slice.shape[0], x + half_brush + 1)
+        y_start = max(0, y - half_brush)
+        y_end = min(data_slice.shape[1], y + half_brush + 1)
+
+        # Create a mask for the brush area within the bounds of data
+        brush_area = data_slice[x_start:x_end, y_start:y_end]
+
+        paint_image_object = self.image3D_obj_stack[self.paint_layer_index]
+        if not hasattr(paint_image_object, 'get_canvas_labels'):
+            # FIXME: raise an error or warning?
+            return
+        allowed_values = np.array(paint_image_object.get_canvas_labels())  # , dtype=canvas_slice.dtype.type
+        mask = np.isin(brush_area, allowed_values)
+
+        # apply active label or 0 depending on painting or erasing
+        if painting:
+            brush_area[mask] = self.paint_brush.get_value()
+        else:
+            # erasing
+            brush_area[mask] = 0
+
+        # update only the modified slice in the 3D array
+        data[int(self.image_view.currentIndex), :, :] = data_slice
+        # Update the displayed image
+        if self.paint_layer_index == self.background_image_index:
+            view_range = self.image_view.view.viewRange()
+            self.image_view.setImage(data)
+            self.image_view.view.setRange(xRange=view_range[0], yRange=view_range[1],
+                                          padding=0)  # preserve the current zoom and pan state
+            self.image_view.setCurrentIndex(self.current_slice_index)  # preserve the current slice
+        else:
+            self.array2D_stack[self.paint_layer_index].setImage(data_slice)
 
     def _update_image_object(self):
         """Update the display min and max of the active Image3D object.
@@ -560,81 +682,146 @@ class Viewport(QWidget):
             else:
                 self.image_view.clear()  # Clear the image view if the layer is empty
 
-    def _mouse_click_event(self, event):
-        # Paint action modifies self.temp_image (3D array) at the current slice
-        if self.is_painting:
-            # Get current slice from ImageView
-            current_slice = int(self.image_view.currentIndex)
-            print(f"Current slice {current_slice}")
-        elif self.is_marking:
+    def _mouse_press(self, event):
+        """
+        :param event:
+        :return:
+        Capture mouse press event and handle painting and marking actions before passing the event back to pyqtgraph.
+        """
+        # FIXME: during testing and dev
+        print("Mouse pressed")
+        print(f"Screen coordinates: {event.scenePos()}")
+
+        if event.modifiers() & Qt.ShiftModifier:
             if event.button() == Qt.LeftButton:
-                img_item = self.image_view.getImageItem()
-                pos = event.pos()
-                mouse_point = img_item.mapFromScene(pos)
-                if img_item is not None and img_item.sceneBoundingRect().contains(mouse_point):
-                    # Transform the scene coordinates to image coordinates
-                    img_shape = self.image3D_obj_stack[0].data.shape
-                    x = int(pos.x())
-                    y = int(pos.y())
-                    z = int(self.image_view.currentIndex)  # Get the current slice index
+                # shift + left click = painting
+                self.is_painting = True
+            elif event.button() == Qt.RightButton:
+                # shift + right click = erasing
+                self.is_erasing = True
 
-                    # ensure coordinates are within image bounds
-                    if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
-                        self.add_marker(x, y)
+        # FIXME: might not work as expected. Maybe just modify the current pixel and don't specifically
+        #  call _mouse_move()?
+        # if self.is_painting or self.is_erasing:
+        #     self._mouse_move(event)
 
-                    print(f"Point added at: x={x}, y={y}, z={z}")
+        # TODO: implement marking mode
 
-        # propagate the event for any further processing
-        event.ignore()
+        # pass the event back to pyqtgraph for any further processing
+        self.original_mouse_press(event)
 
-    def _toggle_crosshairs(self):
-        """toggle crosshair visibility"""
-        self.show_crosshairs = not self.show_crosshairs
-        self.horizontal_line.setVisible(self.show_crosshairs)
-        self.vertical_line.setVisible(self.show_crosshairs)
+        # # Paint action modifies self.temp_image (3D array) at the current slice
+        # if self.is_painting:
+        #     # Get current slice from ImageView
+        #     current_slice = int(self.image_view.currentIndex)
+        #     print(f"Current slice {current_slice}")
+        # elif self.is_marking:
+        #     if event.button() == Qt.LeftButton:
+        #         img_item = self.image_view.getImageItem()
+        #         pos = event.pos()
+        #         mouse_point = img_item.mapFromScene(pos)
+        #         if img_item is not None and img_item.sceneBoundingRect().contains(mouse_point):
+        #             # Transform the scene coordinates to image coordinates
+        #             img_shape = self.image3D_obj_stack[0].data.shape
+        #             x = int(pos.x())
+        #             y = int(pos.y())
+        #             z = int(self.image_view.currentIndex)  # Get the current slice index
+        #
+        #             # ensure coordinates are within image bounds
+        #             if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
+        #                 self.add_marker(x, y)
+        #
+        #             print(f"Point added at: x={x}, y={y}, z={z}")
+        #
+        # # propagate the event for any further processing
+        # event.ignore()
 
-    def _mouse_move(self, pos):
-        if self.background_image_index is None:
+        # if self.is_painting:
+        #     # Get current slice from ImageView
+        #     current_slice = int(self.image_view.currentIndex)
+        #     print(f"Current slice {current_slice}")
+        # elif self.is_marking:
+        #     if event.button() == Qt.LeftButton:
+        #         img_item = self.image_view.getImageItem()
+        #         pos = event.pos()
+        #         mouse_point = img_item.mapFromScene(pos)
+        #         if img_item is not None and img_item.sceneBoundingRect().contains(mouse_point):
+        #             # Transform the scene coordinates to image coordinates
+        #             img_shape = self.image3D_obj_stack[0].data.shape
+        #             x = int(pos.x())
+        #             y = int(pos.y())
+        #             z = int(self.image_view.currentIndex)  # Get the current slice index
+        #
+        #             # ensure coordinates are within image bounds
+        #             if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
+        #                 self.add_marker(x, y)
+        #
+        #             print(f"Point added at: x={x}, y={y}, z={z}")
+
+    def _mouse_move(self, event):
+        """
+        :param pos:
+        :return:
+        Update the coordinates label and crosshairs with the current mouse position, apply paint brush if painting,
+        move marker if dragging.
+        """
+        # print("Mouse moved")
+        # print(pos)
+
+        if self.background_image_index is None or self.image3D_obj_stack[self.background_image_index] is None:
             return
-        if self.image3D_obj_stack[self.background_image_index] is None:
-            return
+
         # use the background image to get the coordinates
         # the background image is always the image view's image item
         # ideally, this would be the high-res medical image, but user is allowed to load overlays (heatmap,
-        # segementation, etc.) without having a base layer loaded.
+        # segementation, masks, etc.) without having a background layer loaded.
+        pos = event.scenePos()
         img_item = self.image_view.getImageItem()  # should be same image referenced by self.background_image_index
-        if img_item is not None and img_item.sceneBoundingRect().contains(pos):
+        if img_item is None or not img_item.sceneBoundingRect().contains(pos):
+            #  position is outside the scene bounding rect, just clear the coords label
+            self.coordinates_label.setText("")
+        else:
             # transform the scene coordinates to image coordinates
             mouse_point = img_item.mapFromScene(pos)
-            if self.image3D_obj_stack[self.background_image_index] is None:
-                return
-            # FIXME: account for view direction?
+            # TODO: account for view direction, only axial implemented here
             img_shape = self.image3D_obj_stack[self.background_image_index].data.shape
             x = int(mouse_point.x())
             y = int(mouse_point.y())
             z = int(self.image_view.currentIndex)  # get the current slice index (same as self.current_slice_index)
 
+            # FIXME: during testing and dev
+            print(f"Image coordinates: {x}, {y}, {z}")
+
+            # update the crosshairs
+            self.horizontal_line.setPos(y)
+            self.vertical_line.setPos(x)
             if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
                 # if coordinates are within image bounds
-                voxel_values = []
-                voxel_values.append(self.image3D_obj_stack[self.background_image_index].data[x, y, z])
-                # also display voxel value of any overlay images
+                # get the value of all voxels at this position
+                voxel_values = [self.image3D_obj_stack[self.background_image_index].data[x, y, z]]
                 image_objs = [im for im in self.image3D_obj_stack if im is not None]
                 if len(image_objs) > 1:
                     for i in range(1, len(image_objs)):
                         voxel_values.append(image_objs[i].data[x, y, z])
 
-                # start with the coordinates
+                # FIXME: during testing and dev
+                # if self.is_painting and self.imageItem2D_canvas.image is not None:
+                # print(f"canvas: {self.imageItem2D_canvas.image[x, y]}")
+
+                # update the coordinates label
                 coordinates_text = "x={:3d}, y={:3d}, z={:3d}".format(x, y, z)
                 # append voxel values for each image
                 for value in voxel_values:
                     coordinates_text += ", {:4.2f} ".format(value)
-
-                # coordinates_text = "Coordinates: x={:3d}, y={:3d}, z={:3d}, Voxel Value: {:4.2f}".format(x, y, z,
-                #                                                                                          voxel_values[0])
                 self.coordinates_label.setText(coordinates_text)
-                if self.dragging_marker:
-                    pass
+
+                # if painting, erasing, or dragging marker
+                if self.is_painting:
+                    self._apply_brush(x, y, True)
+                elif self.is_erasing:
+                    self._apply_brush(x, y, False)
+                elif self.is_dragging_marker:
+                    # TODO
                     # # Get the position of the mouse
                     # img_item = self.image_view.getImageItem()
                     # mouse_point = img_item.mapFromScene(pos)
@@ -644,16 +831,36 @@ class Viewport(QWidget):
                     # y = int(mouse_point.y())
                     #
                     # # Move the marker to the new position
-                    # self.dragging_marker.setData(pos=[(x, y)], brush='r', size=10)
+                    # self.is_dragging_marker.setData(pos=[(x, y)], brush='r', size=10)
+                    pass
+                else:
+                    # probably panning - pass the event back to pyqtgraph for any further processing
+                    self.original_mouse_move(event)
 
             else:
+                # position is outside the image bounds, just clear the coords labe
                 self.coordinates_label.setText("")
 
-            self.horizontal_line.setPos(y)
-            self.vertical_line.setPos(x)
+    def _mouse_release(self, event):
+        """
+        :param event:
+        :return:
+        Disable painting, erasing, and dragging marker actions and pass the event back to pyqtgraph.
+        """
+        # FIXME: during testing and dev
+        print("Mouse Released")
 
-        else:
-            self.coordinates_label.setText("")
+        self.is_painting = False
+        self.is_erasing = False
+        self.is_dragging_marker = False
+        # pass event back to pyqtgraph for any further processing
+        self.original_mouse_release(event)
+
+    def _toggle_crosshairs(self):
+        """toggle crosshair visibility"""
+        self.show_crosshairs = not self.show_crosshairs
+        self.horizontal_line.setVisible(self.show_crosshairs)
+        self.vertical_line.setVisible(self.show_crosshairs)
 
     def _toggle_histogram(self):
         """toggle the visibility of the histogram/colormap/opacity widget"""
