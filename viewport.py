@@ -180,36 +180,39 @@ class Viewport(QWidget):
 
         self.image3D_obj_stack[stack_position] = image  # not a deep copy, reference to the image3D object
         self.active_image_index = stack_position
-
+        # PyQtGraph expects the first dimension of the array to represent time or frames in a sequence, but when used
+        # for static 3D volumes, it expects the first dimension to represent slices (essentially the "depth" dimension
+        # for 3D data).
         if image is not None:
             # populate the 3D array stack with the data from this image3D object
             if self.view_dir == ViewDir.AX.dir:
                 # axial view: transpose to (z, x, y)
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (2, 0, 1))
+                # FIXME: during testing and dev
+                print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
+
                 ratio = image.dy / image.dx
-                # start at middle slice
-                self.current_slice_index = int(self.array3D_stack[stack_position].shape[0] // 2)
-                # print(self.id, self.array3D_stack[stack_position].shape, self.current_slice_index)
             elif self.view_dir == ViewDir.COR.dir:
                 # TODO: orient image for coronal view
                 # coronal view: transpose to (y, x, z)
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (1, 0, 2))
+                # FIXME: during testing and dev
+                print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
+
                 ratio = image.dz / image.dx
-                # start at middle slice
-                self.current_slice_index = int(self.array3D_stack[stack_position].shape[0] // 2)
-                # print(self.id, self.array3D_stack[stack_position].shape, self.current_slice_index)
             else:  # "SAG"
                 # TODO: orient image for sagittal view
                 # sagittal view: transpose to (x, y, z)
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (0, 1, 2))
-                ratio = image.dz / image.dy
-                # start at middle slice
-                self.current_slice_index = int(self.array3D_stack[stack_position].shape[0] // 2)
-                # print(self.id, self.array3D_stack[stack_position].shape, self.current_slice_index)
+                # FIXME: during testing and dev
+                print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
+                ratio = image.dz / image.dy
+            # start at middle slice
+            self.current_slice_index = int(self.array3D_stack[stack_position].shape[0] // 2)
             # set the aspect ratio of the image view to match this new image
             # FIXME: is there a better way to do this? Should this be done in refresh()?
             self.image_view.getView().setAspectLocked(True, ratio=ratio)
@@ -702,8 +705,8 @@ class Viewport(QWidget):
 
         # FIXME: might not work as expected. Maybe just modify the current pixel and don't specifically
         #  call _mouse_move()?
-        # if self.is_painting or self.is_erasing:
-        #     self._mouse_move(event)
+        if self.is_painting or self.is_erasing:
+            self._mouse_move(event)
 
         # TODO: implement marking mode
 
@@ -765,36 +768,69 @@ class Viewport(QWidget):
         Update the coordinates label and crosshairs with the current mouse position, apply paint brush if painting,
         move marker if dragging.
         """
-        # print("Mouse moved")
-        # print(pos)
+
+        # position of the cursor in the scene
+        pos = event.scenePos()
+
+        # FIXME: during testing and dev
+        # print(f"Scene cursor position: {pos}")
 
         if self.background_image_index is None or self.image3D_obj_stack[self.background_image_index] is None:
+            # nothing to do
             return
 
         # use the background image to get the coordinates
         # the background image is always the image view's image item
         # ideally, this would be the high-res medical image, but user is allowed to load overlays (heatmap,
-        # segementation, masks, etc.) without having a background layer loaded.
-        pos = event.scenePos()
+        #   segementation, masks, etc.) without having a background layer loaded
         img_item = self.image_view.getImageItem()  # should be same image referenced by self.background_image_index
+        background_image_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
+        background_image_data = self.array3D_stack[self.background_image_index]  # 3D array of data, transposed
         if img_item is None or not img_item.sceneBoundingRect().contains(pos):
             #  position is outside the scene bounding rect, just clear the coords label
             self.coordinates_label.setText("")
         else:
-            # transform the scene coordinates to image coordinates
+            # transform the scene coordinates to 2D image coordinates
             mouse_point = img_item.mapFromScene(pos)
-            # TODO: account for view direction, only axial implemented here
-            img_shape = self.image3D_obj_stack[self.background_image_index].data.shape
+            # FIXME: during testing and dev
+            print(f"2D image coordinates: {mouse_point}")
+
+            # NOTE: PyQtGraph expects the first dimension of the 3D array to represent time or frames in a sequence,
+            #  but when used for static 3D volumes, it expects the first dimension to represent slices (essentially
+            #  the "depth" dimension for 3D data).
+
+            # get the coordinates of the mouse in the 3D image data
+            # if self.view_dir == ViewDir.AX.dir:
+            #     # axial view: image3D data was transposed to (z, x, y)
+            #     x = int(mouse_point.x())
+            #     y = int(mouse_point.y())
+            #     z = int(self.image_view.currentIndex)  # get the current slice index (same as self.current_slice_index)
+            # elif self.view_dir == ViewDir.COR.dir:
+            #     # coronal view: image3D data was transposed to (y, x, z)
+            #     x = int(mouse_point.x())
+            #     y = int(self.image_view.currentIndex)
+            #     z = int(mouse_point.y())
+            # else:  # "SAG"
+            #     # sagittal view: image3D data was transposed to (x, y, z)
+            #     x = int(mouse_point.y())
+            #     y = int(self.image_view.currentIndex)
+            #     z = int(mouse_point.x())
             x = int(mouse_point.x())
             y = int(mouse_point.y())
             z = int(self.image_view.currentIndex)  # get the current slice index (same as self.current_slice_index)
 
             # FIXME: during testing and dev
-            print(f"Image coordinates: {x}, {y}, {z}")
+            print(f"3D image coordinates: x: {x}, y: {y}, z: {z}")
+
+            img_shape = background_image_data.shape  # shape of the 3D array, transposed from Image3D object
+            # note that shape returns z, x, y
+            # FIXME: during testing and dev
+            print(f"3D image shape (x,y,z): {img_shape[2]}, {img_shape[0]}, {img_shape[1]}")
 
             # update the crosshairs
             self.horizontal_line.setPos(y)
             self.vertical_line.setPos(x)
+
             if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
                 # if coordinates are within image bounds
                 # get the value of all voxels at this position
