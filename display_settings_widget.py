@@ -147,11 +147,13 @@ class DisplaySettingsWidget(QFrame):
                 self.colormap_combo.setCurrentColormap("colorcet:cet_l1")
                 vol.colormap = self.colormap_combo.currentColormap().to_mpl()
             else:
-                try:
-                    self.colormap_combo.setCurrentColormap(vol.colormap.name)
-                except ValueError:
-                    self.colormap_combo.setCurrentColormap("colorcet:cet_l1")
-                    vol.colormap = self.colormap_combo.currentColormap().to_mpl()
+                pass
+                # FIXME
+                # try:
+                #     self.colormap_combo.setCurrentColormap(vol.colormap.name)
+                # except ValueError:
+                #     self.colormap_combo.setCurrentColormap("colorcet:cet_l1")
+                #     vol.colormap = self.colormap_combo.currentColormap().to_mpl()
 
             # initialize the transparency slider
             self.ui.transparency_slider.blockSignals(True)

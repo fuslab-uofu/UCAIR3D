@@ -29,6 +29,7 @@ class Viewport(QWidget):
         self.zoom_method = _zoom_method  # TODO: future implementation, custom zoom method
         self.pan_method = _pan_method  # TODO: future implementation, custom pan method
         self.window_method = _window_method  # TODO: future implementation, custom method for windowing
+        self.display_convention = "RAS"  # default to RAS (radiological convention) # TODO, make this an input opt.
 
         # initialize widgets and their slots -------------------------------------
         # the main layout for this widget ----------
@@ -171,8 +172,13 @@ class Viewport(QWidget):
     #  -----------------------------------------------------------------------------------------------------------------
 
     def add_layer(self, image, stack_position):
-        """Update the stack of 3D images with a new 3D image for this viewPort.
-        image = None is allowed and will clear the layer at the specified position."""
+        """
+        :param image:
+        :param stack_position:
+        :return:
+        Update the stack of 3D images with a new 3D image for this viewPort.
+        image = None is allowed and will clear the layer at the specified position.
+        """
 
         if stack_position > self.num_vols_allowed:
             # TODO: raise an error or warning - the stack position is out of bounds
@@ -375,10 +381,13 @@ class Viewport(QWidget):
                     main_image.setOpacity(im_obj.alpha)
                     main_image.setLookupTable(im_obj.colormap)
 
-                    # for canonical orientation, invert the x-axis
-                    # FIXME: correct?
+                    # FIXME: correct? # radiological convention = RAS+ notation
+                    #  (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
+                    #  at the bottom of the screen?)
                     self.image_view.getImageItem().getViewBox().invertY(False)
-                    self.image_view.getImageItem().getViewBox().invertX(True)
+                    if im_obj.x_dir == 'R':
+                        # x increases from screen right to left if RAS+ notation and patient is HFS
+                        self.image_view.getImageItem().getViewBox().invertX(True)
 
                     self.is_user_histogram_interaction = True
                     self.background_image_index = ind
@@ -578,7 +587,7 @@ class Viewport(QWidget):
         self.paint_layer_index = 2
 
         data = self.array3D_stack[self.paint_layer_index]
-        data_slice = data[int(self.image_view.currentIndex), :, :]
+        data_slice = data[int(self.image_view.currentIndex), :, :]  # arrays have been transposed
 
         # Define the range for the brush area
         half_brush = self.paint_brush.get_size() // 2
@@ -765,7 +774,7 @@ class Viewport(QWidget):
 
     def _mouse_move(self, event):
         """
-        :param pos:
+        :param event:
         :return:
         Update the coordinates label and crosshairs with the current mouse position, apply paint brush if painting,
         move marker if dragging.
@@ -782,81 +791,74 @@ class Viewport(QWidget):
             return
 
         # use the background image to get the coordinates
-        # the background image is always the image view's image item
+        # the background image is always the ImageView's image item
         # ideally, this would be the high-res medical image, but user is allowed to load overlays (heatmap,
         #   segementation, masks, etc.) without having a background layer loaded
         img_item = self.image_view.getImageItem()  # should be same image referenced by self.background_image_index
-        background_image_data = self.array3D_stack[self.background_image_index]  # 3D array of data, transposed
+        background_image_data = self.array3D_stack[self.background_image_index]  # 3D array of data, optnly. transposed
         background_image_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
         if img_item is None or not img_item.sceneBoundingRect().contains(pos):
             #  position is outside the scene bounding rect, just clear the coords label
             self.coordinates_label.setText("")
         else:
             # transform the scene coordinates to 2D image coordinates
-            mouse_point = img_item.mapFromScene(pos)
+            plot_mouse_point = img_item.mapFromScene(pos)
+            plot_x = int(plot_mouse_point.x())
+            plot_y = int(plot_mouse_point.y())
             # FIXME: during testing and dev
-            # print(f"Scene coordinates: {mouse_point}")
-
-            # NOTE: PyQtGraph expects the first dimension of the 3D array to represent time or frames in a sequence,
-            #  but when used for static 3D volumes, it expects the first dimension to represent slices (essentially
-            #  the "depth" dimension for 3D data).
-
-            # get the coordinates of the mouse in the 3D image data
-            # if self.view_dir == ViewDir.AX.dir:
-            #     # axial view: image3D data was transposed to (z, x, y)
-            #     x = int(mouse_point.x())
-            #     y = int(mouse_point.y())
-            #     z = int(self.image_view.currentIndex)  # get the current slice index (same as self.current_slice_index)
-            # elif self.view_dir == ViewDir.COR.dir:
-            #     # coronal view: image3D data was transposed to (y, x, z)
-            #     x = int(mouse_point.x())
-            #     y = int(self.image_view.currentIndex)
-            #     z = int(mouse_point.y())
-            # else:  # "SAG"
-            #     # sagittal view: image3D data was transposed to (x, y, z)
-            #     x = int(mouse_point.y())
-            #     y = int(self.image_view.currentIndex)
-            #     z = int(mouse_point.x())
-            screen_x = int(mouse_point.x())
-            screen_y = int(mouse_point.y())
-            # z = int(self.image_view.currentIndex)  # get the current slice index (same as self.current_slice_index)
+            print(f"Scene coordinates: x: {plot_x}, y: {plot_y}")
 
             # update the crosshairs
-            self.horizontal_line.setPos(screen_y)
-            self.vertical_line.setPos(screen_x)
+            self.horizontal_line.setPos(plot_y)
+            self.vertical_line.setPos(plot_x)
 
-            # note that shape returns z, x, y
+            # get the voxel indices of the cursor in the 3D image data
+            # NOTE: PyQtGraph expects the first dimension of the 3D array to represent time or frames in a sequence,
+            #  but when used for static 3D volumes, it expects the first dimension to represent slices (essentially
+            #  the "depth" dimension for 3D data). So I have reshaped the 3D arrays such that the first dimension is
+            #  the z-axis, the second is the x-axis, and the third is the y-axis.
+
+            # shape will return z, x, y here
             img_shape = background_image_data.shape  # shape of the 3D array, transposed from Image3D object
-            print(img_shape)
+            # FIXME: during testing and dev
+            print(f"Image shape: x: {img_shape[1]}, y: {img_shape[2]}, z: {img_shape[0]}")
+            plot_z = int(self.image_view.currentIndex)  # current slice index
 
-            voxel_ijk = background_image_obj.screenxy_to_imageijk(self.view_dir, screen_x, screen_y,
-                                                                  self.image_view.currentIndex)
-            image_i = voxel_ijk[0]
-            image_j = voxel_ijk[1]
-            image_k = voxel_ijk[2]
+            if self.display_convention == 'RAS':
+                # radiological convention = RAS+ notation
+                # (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
+                # at the bottom of the screen?)
+                # FIXME: here, we are not using the screenxy_to_imageijk() method of the image3D object because
+                #  we are using the already transposed 3D array to diaplay the images. Essentially, we are treating
+                #  the 3D array as if it were in the axial orientation.
+                if background_image_obj.x_dir == 'R':
+                    voxel_col = plot_x
+                else:  # 'L'
+                    voxel_col = img_shape[1] - 1 - plot_x
+                if background_image_obj.y_dir == 'A':
+                    voxel_row = plot_y
+                else:  # 'P'
+                    voxel_row = img_shape[2] - 1 - plot_y
+                voxel_slice = plot_z
 
             # FIXME: during testing and dev
-            print(f"Image shape (x,y,z): {img_shape[1]}, {img_shape[2]}, {img_shape[0]}")
+            print(f"3D image coordinates: col: {voxel_col}, row: {voxel_row}, slice: {voxel_slice}")
 
-            # FIXME: during testing and dev
-            print(f"3D image coordinates: x: {image_i}, y: {image_j}, z: {image_k}")
-
-            # FIXME: x axis is inverted, in the plot, so we need to invert it here
-            if 0 <= image_i < img_shape[1] and 0 <= image_j < img_shape[2] and 0 <= image_k < img_shape[0]:
+            if 0 <= voxel_col < img_shape[1] and 0 <= voxel_row < img_shape[2] and 0 <= voxel_slice < img_shape[0]:
                 # if coordinates are within image bounds
                 # get the value of all voxels at this position
-                voxel_values = [self.image3D_obj_stack[self.background_image_index].data[image_i, image_j, image_k]]
-                image_objs = [im for im in self.image3D_obj_stack if im is not None]
-                if len(image_objs) > 1:
-                    for i in range(1, len(image_objs)):
-                        voxel_values.append(image_objs[i].data[image_i, image_j, image_k])
+                voxel_values = [background_image_data[voxel_slice, voxel_col, voxel_row]]
+                data_arrays = [arr for arr in self.array3D_stack if arr is not None]
+                if len(data_arrays) > 1:
+                    for i in range(1, len(data_arrays)):
+                        voxel_values.append(data_arrays[i][voxel_slice, voxel_col, voxel_row])
 
                 # FIXME: during testing and dev
                 # if self.is_painting and self.imageItem2D_canvas.image is not None:
                 # print(f"canvas: {self.imageItem2D_canvas.image[x, y]}")
 
                 # update the coordinates label
-                coordinates_text = "x={:3d}, y={:3d}, z={:3d}".format(screen_x, screen_y, image_k)
+                coordinates_text = "Image coords col={:3d}, row={:3d}, slice={:3d}".format(voxel_col, voxel_row, voxel_slice)
                 # append voxel values for each image
                 for value in voxel_values:
                     coordinates_text += ", {:4.2f} ".format(value)
@@ -864,9 +866,9 @@ class Viewport(QWidget):
 
                 # if painting, erasing, or dragging marker
                 if self.is_painting:
-                    self._apply_brush(image_i, image_j, True)
+                    self._apply_brush(voxel_col, voxel_row, True)
                 elif self.is_erasing:
-                    self._apply_brush(image_i, image_j, False)
+                    self._apply_brush(voxel_col, voxel_row, False)
                 elif self.is_dragging_marker:
                     # TODO
                     # # Get the position of the mouse
