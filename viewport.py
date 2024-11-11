@@ -4,7 +4,7 @@ import re
 
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider, QComboBox
 from PyQt5.QtGui import QIcon, QFont, QCursor
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QObject
 
 from enumerations import ViewDir
 from paint_brush import PaintBrush
@@ -76,6 +76,10 @@ class Viewport(QWidget):
         image_view_layout = QHBoxLayout()
         # the image view widget ----------
         self.image_view = pg.ImageView()
+
+        # FIXME: testing
+        # self.image_view.setFocusPolicy(Qt.ClickFocus)
+
         self.original_mouse_press = self.image_view.getView().scene().mousePressEvent
         self.original_mouse_release = self.image_view.getView().scene().mouseReleaseEvent
         self.original_mouse_move = self.image_view.getView().scene().mouseMoveEvent
@@ -230,11 +234,28 @@ class Viewport(QWidget):
         self.refresh()
 
     def remove_layer(self, stack_position):
+        # FIXME: this wipes out the image3D object!
         self.image3D_obj_stack[stack_position] = None
         self.array3D_stack[stack_position] = None
         # self.array2D_stack[stack_position].clear()
         self.array2D_stack[stack_position] = None
         self.refresh()
+
+    def hide_layer(self, stack_position):
+        if self.image3D_obj_stack[stack_position] is None:
+            return
+        if stack_position == self.background_image_index:
+            self.image_view.getImageItem().setVisible(False)
+        else:
+            self.array2D_stack[stack_position].setVisible(False)
+
+    def show_layer(self, stack_position):
+        if self.image3D_obj_stack[stack_position] is None:
+            return
+        if stack_position == self.background_image_index:
+            self.image_view.getImageItem().setVisible(True)
+        else:
+            self.array2D_stack[stack_position].setVisible(True)
 
     def move_layer_up(self):
         # TODO
@@ -379,7 +400,7 @@ class Viewport(QWidget):
                     main_image.setLevels([im_obj.display_min, im_obj.display_max])
                     # apply the opacity of the Image3D object to the ImageItem
                     main_image.setOpacity(im_obj.alpha)
-                    main_image.setLookupTable(im_obj.colormap)
+                    main_image.setLookupTable(im_obj.lookup_table)
 
                     # FIXME: correct? # radiological convention = RAS+ notation
                     #  (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
@@ -462,7 +483,7 @@ class Viewport(QWidget):
             # Set the levels to prevent LUT rescaling based on the slice content
             overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
             overlay_image_item.setOpacity(overlay_image_object.alpha)
-            overlay_image_item.setLookupTable(overlay_image_object.colormap)
+            overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
             self.is_user_histogram_interaction = True
 
             # def _set_overlay_slice(self, layer_index):
@@ -650,11 +671,11 @@ class Viewport(QWidget):
             else:
                 if not found_bottom_image:
                     found_bottom_image = True
-                    if im.colormap is not None:
-                        self.image_view.getImageItem().setLookupTable(im.colormap)
+                    if im.lookup_table is not None:
+                        self.image_view.getImageItem().setLookupTable(im.lookup_table)
                 else:
                     if self.array2D_stack[ind] is not None:
-                        self.array2D_stack[ind].setLookupTable(im.colormap)
+                        self.array2D_stack[ind].setLookupTable(im.lookup_table)
 
     def _layer_selection_changed(self, index):
         """Update the layer associated with histogram settings and interactions."""
@@ -858,7 +879,7 @@ class Viewport(QWidget):
                 # print(f"canvas: {self.imageItem2D_canvas.image[x, y]}")
 
                 # update the coordinates label
-                coordinates_text = "Image coords col={:3d}, row={:3d}, slice={:3d}".format(voxel_col, voxel_row, voxel_slice)
+                coordinates_text = "col:{:3d}, row:{:3d}, slice:{:3d}".format(voxel_col, voxel_row, voxel_slice)
                 # append voxel values for each image
                 for value in voxel_values:
                     coordinates_text += ", {:4.2f} ".format(value)
