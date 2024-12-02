@@ -15,21 +15,57 @@ from pyqtgraph import ScatterPlotItem
 from PyQt5.QtCore import pyqtSignal
 
 
-class CustomScatterPlotItem(ScatterPlotItem):
-    sigPressed = pyqtSignal(object, object, object)  # custom signal for mouse press
+# class CustomScatterPlotItem(ScatterPlotItem):
+#     sigPressed = pyqtSignal(object, object, object)  # custom signal for mouse press
+#
+#     def __init__(self, im_idx = None, sl_idx=None, col_idx=None, row_idx=None, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.image_idx = im_idx  # store the image index that this point was added to
+#         self.z = sl_idx  # store the image slice that this point was added to
+#         self.x = col_idx
+#         self.y = row_idx
+#
+#     def mousePressEvent(self, event):
+#         # emit custom signal when mouse is pressed
+#         self.sigPressed.emit(self, self.pointsAt(event.pos()), event)  # multiple points may be at this position(?)
+#         # call the parent method to handle additional behavior if needed
+#         super().mousePressEvent(event)
 
-    def __init__(self, im_idx = None, sl_idx=None, col_idx=None, row_idx=None, *args, **kwargs):
+class CustomScatterPlotItem(pg.ScatterPlotItem):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.image_idx = im_idx  # store the image index that this point was added to
-        self.z = sl_idx  # store the image slice that this point was added to
-        self.x = col_idx
-        self.y = row_idx
+        self.mouse_press_callback = None
+        self.mouse_release_callback = None
+        # self.current_point = None  # Track the currently selected point
+
+    def set_mouse_press_callback(self, callback):
+        self.mouse_press_callback = callback
+
+    def set_mouse_release_callback(self, callback):
+        self.mouse_release_callback = callback
 
     def mousePressEvent(self, event):
-        # emit custom signal when mouse is pressed
-        self.sigPressed.emit(self, self.pointsAt(event.pos()), event)  # multiple points may be at this position(?)
-        # call the parent method to handle additional behavior if needed
-        super().mousePressEvent(event)
+        # find the spot that was pressed and pass it to custom callback
+        clicked_spots = self.pointsAt(event.pos())
+        if clicked_spots:
+            clicked_spot = clicked_spots[0]  # Assume only one point is clicked
+            point_data = clicked_spot.data()  # Access the metadata for the point
+
+            # # FIXME: during testing and dev
+            # print(f"CustomScatterPlotItem:_mousePressEvent: {point_data} at position {clicked_spot.pos()}")
+
+            # call the custom callback if provided
+            if self.mouse_press_callback:
+                self.mouse_press_callback(event, point_data)
+            else:
+                # Preserve default behavior
+                super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.mouse_release_callback:
+            self.mouse_release_callback(event)
+        super().mouseReleaseEvent(event)  # Ensure default behavior is preserved
+
 
 
 class Viewport(QWidget):
@@ -70,7 +106,7 @@ class Viewport(QWidget):
         self.add_point_mode = False  # if adding points, are we placing a new point?
         self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
         self.drag_point_mode = False  # if adding points, are we dragging a point?
-        self.current_point = None
+        # self.current_point = None
 
         # default colors for points TODO: let parent class update these
         self.idle_point_color = (255, 0, 0, 255)  # red
@@ -203,9 +239,10 @@ class Viewport(QWidget):
         self.imageItem2D_canvas = pg.ImageItem()
         self.image_view.view.addItem(self.imageItem2D_canvas)
 
-        # ScatterPlotItem for points
-        self.scatter = pg.ScatterPlotItem()
-        self.scatter.sigClicked.connect(self._point_clicked)
+        # this is the plot item for creating points. Customized to capture mouse press and mouse release events
+        self.scatter = CustomScatterPlotItem()
+        self.scatter.set_mouse_press_callback(self._scatter_mouse_press)
+        # self.scatter.set_mouse_release_callback(self._scatter_mouse_release)
         self.image_view.getView().addItem(self.scatter)
 
         # differentiate between user interacting with histogram widget and histogram updated by the viewport
@@ -346,6 +383,16 @@ class Viewport(QWidget):
 
     # points -----------------------------------------------------------------------------------------------------------
 
+    # def set_point_selected(self, point):
+    #     """
+    #     Sets the specified point as selected. Deselects all other points in this viewport.
+    #
+    #     :param point:
+    #     :return:
+    #     """
+    #     # first clear any (all?) selected point(s?) (assumes more than one can be selected at once?)
+    #     self.clear_selected_points()
+
     def toggle_point_selected(self, point_id, is_selected):
         """
         Sets the point with the specified id as selected. Deselects all other points in this viewport.
@@ -379,13 +426,14 @@ class Viewport(QWidget):
 
     def clear_selected_points(self):
         """
-        Changes the color of all points to idle color.
+        Sets all points in this viewport to unselected.
 
         :return:
         """
         for slice_idx, points in self.slice_points.items():
             for pt in points:
                 pt['is_selected'] = False
+        self.selected_point = None
 
     def set_add_point_mode(self, _is_adding):
         """Can be called by external class to toggle _add_point mode."""
@@ -853,7 +901,7 @@ class Viewport(QWidget):
                     point_id = shortuuid.ShortUUID().random(length=8)  # short, unique, and human-readable is
                     # FIXME: check to see if this id is already in use (is that possible?)
                     # add the point with additional metadata
-                    self.slice_points[plot_z].append({
+                    new_point = {
                         'screen_x': int(pos.x()),
                         'screen_y': int(pos.y()),
                         'screen_z': plot_z,  # FIXME: is this correct?
@@ -861,15 +909,16 @@ class Viewport(QWidget):
                         'voxel_row': voxel_row,  # voxel index into the 3D array
                         'voxel_slice': voxel_slice,  # voxel index into the 3D array
                         'id': point_id,
-                        'is_selected': False,
-                    })
+                        'is_selected': False
+                    }
+                    self.slice_points[plot_z].append(new_point)
 
-                # update points display
-                self._update_points()
+                # # update points display
+                # self._update_points()
             else:  # TODO: handle other display conventions
                 pass
 
-        return point_id
+        return new_point
 
     # def _add_point_at(self, _im_idx: int, x: int, y: int, z: int):
     #     """
@@ -930,47 +979,92 @@ class Viewport(QWidget):
         current_slice = int(self.image_view.currentIndex)
         points = self.slice_points.get(current_slice, [])
 
+        # print(points)
+
         # update ScatterPlotItem
         if len(points) > 0:
             spots = [
                 {
-                    'pos': (point['voxel_col'], point['voxel_row']),
+                    'pos': (point['voxel_col'], point['voxel_row']), 'data': point,
                     'brush': self.selected_brush if point['is_selected'] else self.idle_brush,
                 }
                 for point in points
             ]
+            # FIXME: testing and debugging
+            # print(f"spots: {spots}")
             self.scatter.setData(spots=spots)
         else:
             self.scatter.clear()
 
-    def _point_clicked(self, scatter, clicked_points):
+    def _scatter_mouse_press(self, event, point):
         """
-        Handle point click by toggling its selected flag. Notify the parent class about the clicked point.
-
-        :param scatter: The ScatterPlotItem object. (not used)
-        :param clicked_points: The list of clicked points (contains instances of Point).
+        When user presses mouse button on a point.
+        :param event:
+        :return:
         """
-        if not clicked_points:
-            return
+        # only respond to the event if the interaction method matches (for example, shift + left click)
+        if self.point_im is not None and self.point_im.matches_event(event):
+            if point is not None:
+                is_selected = point.get('is_selected')
+                if not is_selected:
+                    # deselect any other point, then select this one
+                    self.selected_point['is_selected'] = False
+                    point['is_selected'] = True  # select the point
+                    self.selected_point = point
 
-        # assume only one point can be clicked (get the first point in the list)  # FIXME: iterate through list
-        clicked_point = clicked_points[0]
-        clicked_pos = clicked_point.pos()  # Get the (x, y) position of the point
-        current_slice = int(self.image_view.currentIndex)
+                # allow this point to be dragged to a new position
+                self.drag_point_mode = True
 
-        # find the clicked point by position in the slice_points data structure
-        for point in self.slice_points.get(current_slice, []):
-            if point['voxel_col'] == clicked_pos[0] and point['voxel_row'] == clicked_pos[1]:
-                point['is_selected'] = not point['is_selected']  # toggle selection
-                self.current_point = point
-            else:
-                point['is_selected'] = False
+                # FIXME: during testing and dev
+                print(f"_scatter_mouse_press: {point}")
 
-        if self.current_point is not None:
-            # update the display of points
-            self._update_points()
-            # notify the parent class about the selected point
-            self.point_clicked_signal.emit(point['id'], point['is_selected'], self.id, self.view_dir)
+        # if point is not already selected, select it and set dragging mode to true
+
+        # if point is already selected, just set dragging mode to true
+
+    # def _scatter_mouse_release(self, event):
+    #     """
+    #     When user releases mouse button on a point.
+    #     :param event:
+    #     :return:
+    #     """
+    #     # FIXME: during testing and dev
+    #     print("_scatter_mouse_release")
+    #
+    #     self.drag_point_mode = False
+
+
+    # def _point_clicked(self, scatter, clicked_points):
+    #     """
+    #     Handle point click by toggling its selected flag. Notify the parent class about the clicked point.
+    #
+    #     :param scatter: The ScatterPlotItem object. (not used)
+    #     :param clicked_points: The list of clicked points (contains instances of Point).
+    #     """
+    #     # FIXME: during testing and dev
+    #     print("_point_clicked")
+    #
+    #     if not clicked_points:
+    #         return
+    #
+    #     # assume only one point can be clicked (get the first point in the list)  # FIXME: iterate through list
+    #     clicked_point = clicked_points[0]
+    #     clicked_pos = clicked_point.pos()  # Get the (x, y) position of the point
+    #     current_slice = int(self.image_view.currentIndex)
+    #
+    #     # find the clicked point by position in the slice_points data structure
+    #     for point in self.slice_points.get(current_slice, []):
+    #         if point['voxel_col'] == clicked_pos[0] and point['voxel_row'] == clicked_pos[1]:
+    #             point['is_selected'] = not point['is_selected']  # toggle selection
+    #             self.current_point = point
+    #         else:
+    #             point['is_selected'] = False
+    #
+    #     if self.current_point is not None:
+    #         # update the display of points
+    #         self._update_points()
+    #         # notify the parent class about the selected point
+    #         self.point_clicked_signal.emit(point['id'], point['is_selected'], self.id, self.view_dir)
 
     # def get_point_by_id_and_slice(self, point_id, slice_index):
     #     """
@@ -1029,8 +1123,7 @@ class Viewport(QWidget):
         Capture mouse press event and handle painting and pointing actions before passing the event back to pyqtgraph.
         """
         # FIXME: during testing and dev
-        print("Mouse pressed")
-        print(f"Screen coordinates: {event.scenePos()}")
+        print(f"_mouse_press: {event.scenePos()}")
 
         if self.image_view.getImageItem().image is None:
             # nothing to do
@@ -1047,11 +1140,18 @@ class Viewport(QWidget):
             self.interaction_state = 'pointing'  # FIXME: not used?
             if self.add_point_mode:  # adding point
                 # add a point at the clicked position
-                new_point_id = self._add_point(event)
-                if new_point_id is not None:
+                new_point = self._add_point(event)
+                if new_point is not None:
+                    # set this new point as the selected point
+                    if self.selected_point is not None:
+                        self.selected_point['is_selected'] = False
+                    new_point['is_selected'] = True
+                    self.selected_point = new_point
                     self.drag_point_mode = True  # user can drag the point to new position before mouse release
+                    # update points display
+                    self._update_points()
                     # emit point created signal
-                    self.point_added_signal.emit(new_point_id, self.id, self.view_dir)
+                    self.point_added_signal.emit(new_point['id'], self.id, self.view_dir)
                 else:
                     # pass the event back to pyqtgraph for any further processing
                     self.original_mouse_press(event)
@@ -1075,8 +1175,8 @@ class Viewport(QWidget):
         # position of the cursor in the scene
         pos = event.scenePos()
 
-        # FIXME: during testing and dev
-        # print(f"Scene cursor position: {pos}")
+        # # FIXME: during testing and dev
+        # print(f"_mouse_move: {pos}")
 
         if self.background_image_index is None or self.image3D_obj_stack[self.background_image_index] is None:
             # nothing to do
@@ -1162,33 +1262,22 @@ class Viewport(QWidget):
                     self._apply_brush(voxel_col, voxel_row, True)
                 elif self.interaction_state == 'erasing':
                     self._apply_brush(voxel_col, voxel_row, False)
-                elif self.drag_point_mode and self.current_point is not None:
-                    self.current_point['screen_x'] = int(pos.x())
-                    self.current_point['screen_y'] =  int(pos.y())
-                    self.current_point['voxel_col'] = voxel_col,  # voxel index into the 3D array
-                    self.current_point['voxel_row'] = voxel_row,  # voxel index into the 3D array
+                elif self.drag_point_mode and self.selected_point is not None:
+                    # FIXME: during testing and dev
+                    # print(f"_mouse_move voxels: {voxel_col}, {voxel_row}, {voxel_slice}")
+                    self.selected_point['screen_x'] = int(pos.x())
+                    self.selected_point['screen_y'] =  int(pos.y())
+                    self.selected_point['voxel_col'] = voxel_col  # voxel index into the 3D array
+                    self.selected_point['voxel_row'] = voxel_row  # voxel index into the 3D array
+                    # print(f"_mouse_move selected point: {self.selected_point}")
 
                     # Update the ScatterPlotItem to reflect the new position
                     self._update_points()
-                    # FIXME: during testing and dev
-                    print("Dragging point")
-                    # # Get the position of the mouse
-                    # img_item = self.image_view.getImageItem()
-                    # mouse_point = img_item.mapFromScene(pos)
-                    #
-                    # # Update the position of the point
-                    # x = int(mouse_point.x())
-                    # y = int(mouse_point.y())
-                    #
-                    # # Move the point to the new position
-                    # self.is_dragging_point.setData(pos=[(x, y)], brush='r', size=10)
-                    pass
                 else:
                     # probably panning - pass the event back to pyqtgraph for any further processing
                     self.original_mouse_move(event)
-
             else:
-                # position is outside the image bounds, just clear the coords labe
+                # position is outside the image bounds, just clear the coords label
                 self.coordinates_label.setText("")
 
     def _mouse_release(self, event):
@@ -1198,10 +1287,13 @@ class Viewport(QWidget):
         Disable painting, erasing, and dragging point actions and pass the event back to pyqtgraph.
         """
         # FIXME: during testing and dev
-        print("Mouse Released")
+        print("_mouse_release")
 
         self.interaction_state = None
         self.drag_point_mode = False
+
+        # Update the ScatterPlotItem to reflect the new position
+        # self._update_points()
 
         # pass event back to pyqtgraph for any further processing
         self.original_mouse_release(event)
