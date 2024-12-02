@@ -1,6 +1,7 @@
 import numpy as np
 import pyqtgraph as pg
 import re
+import shortuuid
 
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider, QComboBox
 from PyQt5.QtGui import QIcon, QFont, QCursor
@@ -15,26 +16,36 @@ from PyQt5.QtCore import pyqtSignal
 
 
 class CustomScatterPlotItem(ScatterPlotItem):
-    sigPressed = pyqtSignal(object, object, object)  # Custom signal for mouse press
+    sigPressed = pyqtSignal(object, object, object)  # custom signal for mouse press
+
+    def __init__(self, im_idx = None, sl_idx=None, col_idx=None, row_idx=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.image_idx = im_idx  # store the image index that this point was added to
+        self.z = sl_idx  # store the image slice that this point was added to
+        self.x = col_idx
+        self.y = row_idx
 
     def mousePressEvent(self, event):
-
-        # Emit custom signal when mouse is pressed
-        self.sigPressed.emit(self, self.pointsAt(event.pos()), event)
-        # Call the parent method to handle additional behavior if needed
+        # emit custom signal when mouse is pressed
+        self.sigPressed.emit(self, self.pointsAt(event.pos()), event)  # multiple points may be at this position(?)
+        # call the parent method to handle additional behavior if needed
         super().mousePressEvent(event)
 
 
 class Viewport(QWidget):
     """ This class displays one or more 3D images. It is interactive and allows the user to pan, zoom, and scroll
     through images. Multiple images can be stacked on top of each other to create overlays. The user can also paint
-    (modify the voxel values) and add markers to the image. Tools are provided for modifying the colormap and opacity
+    (modify the voxel values) and add points to the image. Tools are provided for modifying the colormap and opacity
     of the images. The calling class must provide the view desired view direction (axial, coronal, sagittal).
     The calling class must also provide the maximum number of image allowed in the stack.
     A viewport is a subclass of QWidget and can be added to a layout in a QMainWindow.
     """
+    # notify parent that a point has been added
+    point_added_signal = pyqtSignal(object, object, object)
+    point_clicked_signal = pyqtSignal(object, bool, object, object)
 
-    def __init__(self, parent, _id, _view_dir, _num_vols, _paint_method=None, _erase_method=None, _mark_method=None,
+
+    def __init__(self, parent, _id, _view_dir, _num_vols, _paint_method=None, _erase_method=None, _point_method=None,
                  _zoom_method=None, _pan_method=None, _window_method=None):
         super().__init__()
 
@@ -42,15 +53,55 @@ class Viewport(QWidget):
         self.id = _id
         self.view_dir = _view_dir.dir  # ViewDir.AX (axial), ViewDir.COR (coronal), ViewDir.SAG (sagittal)
         self.num_vols_allowed = _num_vols  # number of images (layers) to display
+        # self.num_vols = 0  # keep track of the number of images currently linked to this viewport
+        # self.num_displayed_images = 0  # FIXME: might not be necessary?
 
-        self.paint_method = _paint_method  # method for painting
-        self.erase_method = _erase_method  # method for erasing
-        self.mark_method = _mark_method  # method for marking
-        self.is_marking = False  # same interaction method for creating marker and selecting marker, need flag
-        self.zoom_method = _zoom_method  # TODO: future implementation, custom zoom method
-        self.pan_method = _pan_method  # TODO: future implementation, custom pan method
-        self.window_method = _window_method  # TODO: future implementation, custom method for windowing
-        self.interaction_state = None  # currently implemented values: 'painting', 'erasing', 'marking', 'dragging'
+        # parent can provide custom methods for interacting with the viewport (e.g., painting, erasing, pointing,
+        #   zooming, panning, and windowing)panning, and windowing)
+        self.paint_im = _paint_method  # method for painting
+        self.erase_im = _erase_method  # method for erasing
+        self.point_im = _point_method  # method for making points
+        self.zoom_im = _zoom_method  # TODO: future implementation, custom zoom method
+        self.pan_im = _pan_method  # TODO: future implementation, custom pan method
+        self.window_im = _window_method  # TODO: future implementation, custom method for windowing
+        self.interaction_state = None  # implemented values: 'painting', 'erasing', 'pointing'
+
+        # point placement modes
+        self.add_point_mode = False  # if adding points, are we placing a new point?
+        self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
+        self.drag_point_mode = False  # if adding points, are we dragging a point?
+        self.current_point = None
+
+        # default colors for points TODO: let parent class update these
+        self.idle_point_color = (255, 0, 0, 255)  # red
+        self.selected_point_color = (0, 255, 0, 255)  # green
+        self.temp_point_color = (255, 255, 0, 255) # yellow
+        self.idle_pen = pg.mkPen(self.idle_point_color, width=1)  # red pen for not idle points
+        self.idle_brush = pg.mkBrush(self.idle_point_color)
+        self.selected_pen = pg.mkPen(self.selected_point_color, width=2)  # green pen for selected point
+        self.selected_brush = pg.mkBrush(self.selected_point_color)
+        self.temp_pen = pg.mkPen(self.temp_point_color, width=1)  # yellow pen for temporary point
+        self.temp_brush = pg.mkBrush(self.temp_point_color)
+
+        # dictionary to store points for each slice
+        self.slice_points = {}
+
+        # convenience reference to the background image item
+        self.background_image_index = None
+        # keep track of the active layer for histogram, colormap, and opacity settings interaction
+        self.active_image_index = None  # default to the first layer (background)
+        self.canvas_layer_index = None  # the layer that is currently being painted on
+        self.point_layer_index = None  # the layer that points are currently being added to
+        self.current_slice_index = 0
+
+        # interactive painting
+        self.is_painting = False
+        self.is_erasing = False
+        self.paint_brush = PaintBrush()
+
+        # interactive point placement
+        self.points = []  # this will be a list of point objects?
+        self.selected_point = None
 
         self.display_convention = "RAS"  # default to RAS (radiological convention) # TODO, make this an input opt.
 
@@ -143,33 +194,19 @@ class Viewport(QWidget):
         image view. """
         self.image3D_obj_stack = [None] * self.num_vols_allowed  # Image3D objects
         self.array3D_stack = [None] * self.num_vols_allowed  # image data 3D arrays
-        self.array2D_stack = [pg.ImageItem() for _ in range(self.num_vols_allowed)]  # image data 2D arrays (slices)
+        # image data 2D arrays (slices) - one less than total number of images allowed because these are overlays
+        self.array2D_stack = [pg.ImageItem() for _ in range(self.num_vols_allowed)]
         for i in range(0, self.num_vols_allowed):
             self.image_view.view.addItem(self.array2D_stack[i])
         # add a canvas mask for painting
         # self.imageItem3D_canvas = pg.ImageItem()
         self.imageItem2D_canvas = pg.ImageItem()
         self.image_view.view.addItem(self.imageItem2D_canvas)
-        self.num_vols = 0  # keep track of the number of images currently linked to this viewport
 
-        # FIXME: might not be necessary?
-        self.num_displayed_images = 0
-
-        # convenience reference to the background image item
-        self.background_image_index = None
-        # keep track of the active layer for histogram, colormap, and opacity settings interaction
-        self.active_image_index = None  # default to the first layer (background)
-        self.canvas_layer_index = None  # the layer that is currently being painted on
-        self.current_slice_index = 0
-
-        # interactive painting
-        self.is_painting = False
-        self.is_erasing = False
-        self.paint_brush = PaintBrush()
-
-        # interactive marker placement
-        self.markers = []  # this will be a list of markers
-        self.selected_marker = None
+        # ScatterPlotItem for points
+        self.scatter = pg.ScatterPlotItem()
+        self.scatter.sigClicked.connect(self._point_clicked)
+        self.image_view.getView().addItem(self.scatter)
 
         # differentiate between user interacting with histogram widget and histogram updated by the viewport
         self.is_user_histogram_interaction = True
@@ -256,9 +293,18 @@ class Viewport(QWidget):
 
         self.refresh()
 
-    def set_canvas_layer(self, index):
-        """Set the canvas layer for painting."""
-        self.canvas_layer_index = index
+    def goto_slice(self, slice_index):
+        """
+        Display the specified slice in the image view.
+
+        :param slice_index:
+        :return:
+        """
+        if self.image_view.getImageItem().image is not None:
+            if 0 <= slice_index < self.image_view.getImageItem().image.shape[0]:
+                self.image_view.setCurrentIndex(slice_index)
+                self.current_slice_index = slice_index
+                self._update_overlays()
 
     def remove_layer(self, stack_position):
         # FIXME: this wipes out the image3D object! That is not what we want to do
@@ -298,95 +344,66 @@ class Viewport(QWidget):
     def get_current_slice(self):
         return self.image_view.currentIndex
 
-    # markers ----------------------------------------------------------------------------------------------------------
-    def toggle_marking_mode(self, _is_marking):
-        """called by external class to toggle marking mode on or off"""
-        self.is_marking = _is_marking
+    # points -----------------------------------------------------------------------------------------------------------
 
-    def add_marker(self, x, y, z=None):
-        """Add a marker at the specified (x, y) coordinates. z (slice index) is optional."""
-        # Create a scatter plot item as a marker
-        marker = CustomScatterPlotItem()
-        # marker.sigClicked.connect(self.marker_pressed)  # Connect to the signal
+    def toggle_point_selected(self, point_id, is_selected):
+        """
+        Sets the point with the specified id as selected. Deselects all other points in this viewport.
+        Since this is called by a parent class, no need to emit signal.
 
-        marker.addPoints([{'pos': (x, y), 'brush': pg.mkBrush('r'), 'size': 10}])  # Customize size and color
+        :param point_id:
+        :param is_selected:
+        :return:
+        """
+        if is_selected:
+            self.clear_selected_points()
 
-        # store position and metadata (slice index) with the point
-        if z is None:
-            slice_index = int(self.image_view.currentIndex)
-        else:
-            slice_index = z
+        point = self.find_point_by_id(point_id)
+        if point is not None:
+            point['is_selected'] = not point['is_selected']  # toggle selection
 
-        marker.addPoints([{
-            'pos': (x, y),
-            'brush': pg.mkBrush('r'),
-            'size': 10,
-            'data': {'slice_index': slice_index, 'object_ref': marker}  # Store the marker itself for easy retrieval
-        }])
+        self._update_points()
 
-        # add marker to the view
-        self.image_view.addItem(marker)
+    def find_point_by_id(self, point_id):
+        """
+        Find the point with the specified ID across all slices.
 
-        # store marker for future reference (e.g., clearing markers)
-        self.markers.append(marker)
+        :param point_id: str (unique ID of the point)
+        :return: tuple (slice_index, point_data) if found, otherwise None
+        """
+        for slice_idx, points in self.slice_points.items():
+            for pt in points:
+                if pt['id'] == point_id:
+                    return pt
+        return None
 
-        marker.sigPressed.connect(self.marker_pressed)  # Connect to the signal
+    def clear_selected_points(self):
+        """
+        Changes the color of all points to idle color.
 
-        print(f"Point added at: x={x}, y={y}, z={slice_index}")
+        :return:
+        """
+        for slice_idx, points in self.slice_points.items():
+            for pt in points:
+                pt['is_selected'] = False
 
-    def clear_markers(self):
-        """Remove all markers from the image view."""
-        for marker in self.markers:
-            self.image_view.removeItem(marker)
-        self.markers.clear()
+    def set_add_point_mode(self, _is_adding):
+        """Can be called by external class to toggle _add_point mode."""
+        self.add_point_mode = _is_adding
 
-    def marker_pressed(self, marker, points, event):
-        """Handle marker pressed event."""
-        # FIXME: during testing and dev
+    def set_pending_point_mode(self, _pending):
+        self.pending_point_mode = _pending
 
-        if self.mark_method is not None and self.mark_method.matches_event(event) and self.is_marking:
-            # only respond to the event if the interaction method matches, and if we are not currently creating a marker
-            print("Marker pressed")
+    def clear_points(self):
+        """Remove all points from the image view."""
+        for point in self.points:
+            self.image_view.removeItem(point)
+        self.points.clear()
 
-            # select marker
-            if len(points) > 0:
-                # assuming only one point is clicked at a time, grab the first point
-                clicked_point = points[0]
-                # Extract the stored data from the clicked point
-                data = clicked_point.data()
-                # Retrieve slice index and marker object from the data
-                slice_index = data['slice_index']
-                clicked_marker = data['object_ref']
-
-                # Define the pen for default and selected markers
-                default_pen = pg.mkPen('r', width=1)  # Red pen for default markers
-                default_brush = pg.mkBrush('r')  # Default color is red
-                selected_pen = pg.mkPen('g', width=2)  # Green pen for selected marker
-                selected_brush = pg.mkBrush('g')  # Change to green or any color for selection
-
-                # Reset all markers to the default color
-                for marker in self.markers:
-                    for point in marker.points():
-                        point.setPen(default_pen)
-                        point.setBrush(default_brush)
-
-                # Change the pen of the clicked marker to indicate selection
-                for point in clicked_marker.points():
-                    point.setPen(selected_pen)
-                    point.setBrush(selected_brush)
-
-                # Store the newly selected marker
-                self.selected_marker = clicked_marker
-
-                # Perform any action you want with the slice_index and clicked_marker
-                print(f"Marker clicked at position: {clicked_point.pos()}, Slice index: {slice_index}")
-
-                self.interaction_state = "dragging"
-
-    def import_markers(self, markers):
-        """called by external class to import markers from a list of (x, y, z) coordinates."""
-        for x, y, z in markers:
-            self.add_marker(x, y, z)
+    def import_points(self, points):
+        """called by external class to import points from a list of (x, y, z) coordinates."""
+        for x, y, z in points:
+            self._add_point(x, y, z)
 
     # painting ---------------------------------------------------------------------------------------------------------
     # def toggle_painting_mode(self, which_layer, _is_painting):
@@ -419,6 +436,10 @@ class Viewport(QWidget):
         # if self.is_painting:
         #     self._update_canvas()
 
+    def set_canvas_layer(self, index):
+        """Set the canvas layer for painting."""
+        self.canvas_layer_index = index
+
     def refresh(self):
         """
         Should be called when one of the images displayed in the viewport changes. Sets the image item, and connects the
@@ -438,6 +459,12 @@ class Viewport(QWidget):
                     im_data = self.array3D_stack[ind]  # the (optionally transposed) 3D array
                     self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
                     self.image_view.setImage(im_data)
+
+                    # FIXME: testing
+                    # self.scatter_items = [pg.ScatterPlotItem() for _ in range(im_data.shape[0])]
+                    # for scatter in self.scatter_items:
+                    #     self.image_view.getView().addItem(scatter)
+
                     main_image = self.image_view.getImageItem()
                     # Set the levels to prevent LUT rescaling based on the slice content
                     main_image.setLevels([im_obj.display_min, im_obj.display_max])
@@ -461,7 +488,6 @@ class Viewport(QWidget):
                     self._update_overlay_slice(ind)  # uses self.current_slice_index
 
                 self.image_view.setCurrentIndex(self.current_slice_index)
-
 
         # refresh the combo box with the current layers in the stack.
         # try:
@@ -501,7 +527,8 @@ class Viewport(QWidget):
             else:
                 if self.array2D_stack[layer_index] is not None:
                     self.array2D_stack[layer_index].clear()
-        # self._update_canvas()
+
+        self._update_points()
 
         # update coordinates to reflect the current slice (so it updates without needing to move the mouse)
         coordinates_text = self.coordinates_label.text()
@@ -555,7 +582,8 @@ class Viewport(QWidget):
 
     def _update_canvas(self):
         """Update the canvas for painting. Masks the painting area using allowed values."""
-        if self.image3D_obj_stack[self.canvas_layer_index] is None or self.array3D_stack[self.canvas_layer_index] is None:
+        if self.image3D_obj_stack[self.canvas_layer_index] is None or self.array3D_stack[
+            self.canvas_layer_index] is None:
             # FIXME: raise an error or warning?
             return
 
@@ -765,125 +793,283 @@ class Viewport(QWidget):
             else:
                 self.image_view.clear()  # Clear the image view if the layer is empty
 
+    def _add_point(self, event):
+        """
+        Get the voxel indices of the mouse event location, then call the _add_point_at() method to add a point at
+        those indices.
+
+        :param event:
+        :return: point_id: str (unique id of the new point) or None
+        """
+        pos = event.scenePos()
+        point_id = None
+
+        # FIXME: use the image specified by point_layer_index, not necessarily the background_image_index
+        img_item = self.image_view.getImageItem()
+        img_data = self.array3D_stack[self.background_image_index]  # 3D array of data, optionally transposed
+        img_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
+
+        if img_item is not None and img_item.sceneBoundingRect().contains(pos):
+            # transform the scene coordinates to 2D image coordinates
+            plot_mouse_point = img_item.mapFromScene(pos)
+            plot_x = int(plot_mouse_point.x())
+            plot_y = int(plot_mouse_point.y())
+
+            # FIXME: during testing and dev
+            # print(f"Scene coordinates: x: {plot_x}, y: {plot_y}")
+
+            # shape will return z, x, y here
+            img_shape = img_data.shape  # shape of the 3D array, transposed from Image3D object
+            # FIXME: during testing and dev
+            # print(f"Image shape: x: {img_shape[1]}, y: {img_shape[2]}, z: {img_shape[0]}")
+            plot_z = int(self.image_view.currentIndex)  # current slice index
+
+            if self.display_convention == 'RAS':
+                # radiological convention = RAS+ notation
+                # (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
+                # at the bottom of the screen?)
+                # FIXME: here, we are NOT using the screenxy_to_imageijk() method of the image3D object because
+                #  we are using the already-transposed 3D array to display the images. Essentially, we are
+                #  treating the 3D array as if it were in the axial orientation.
+                if img_obj.x_dir == 'R':
+                    voxel_col = plot_x
+                else:  # 'L'
+                    voxel_col = img_shape[1] - 1 - plot_x
+                if img_obj.y_dir == 'A':
+                    voxel_row = plot_y
+                else:  # 'P'
+                    voxel_row = img_shape[2] - 1 - plot_y
+                voxel_slice = plot_z
+
+                # FIXME: during testing and dev
+                # print(f"3D image coordinates: col: {voxel_col}, row: {voxel_row}, slice: {voxel_slice}")
+
+                if (0 <= voxel_col < img_shape[1] and 0 <= voxel_row < img_shape[2] and
+                        0 <= voxel_slice < img_shape[0]):
+                    # if coordinates are within image bounds
+                    if voxel_slice not in self.slice_points:
+                        self.slice_points[voxel_slice] = []
+                    # create a unique id for the new  point
+                    point_id = shortuuid.ShortUUID().random(length=8)  # short, unique, and human-readable is
+                    # FIXME: check to see if this id is already in use (is that possible?)
+                    # add the point with additional metadata
+                    self.slice_points[plot_z].append({
+                        'screen_x': int(pos.x()),
+                        'screen_y': int(pos.y()),
+                        'screen_z': plot_z,  # FIXME: is this correct?
+                        'voxel_col': voxel_col,  # voxel index into the 3D array
+                        'voxel_row': voxel_row,  # voxel index into the 3D array
+                        'voxel_slice': voxel_slice,  # voxel index into the 3D array
+                        'id': point_id,
+                        'is_selected': False,
+                    })
+
+                # update points display
+                self._update_points()
+            else:  # TODO: handle other display conventions
+                pass
+
+        return point_id
+
+    # def _add_point_at(self, _im_idx: int, x: int, y: int, z: int):
+    #     """
+    #     :param _im_idx: uint (index of the image in the stack)
+    #     :param x: uint (column index)
+    #     :param y: uint (row index)
+    #     :param z: uint (slice index)
+    #     :return: new point item
+    #     Add a custom scatterplot item (point) at the specified (x, y) coordinates. z (slice index) is optional.
+    #     Add point to list of points in this viewport, and connect a point press event to the point.
+    #     """
+    #
+    #     # validate that x, y, and z are non-negative
+    #     if x < 0 or y < 0 or (z is not None and z < 0):
+    #         raise ValueError("x, y, and z (if provided) must be non-negative integers.")
+    #
+    #     # # create a scatter plot item as a point
+    #     # custom_point = CustomScatterPlotItem(im_idx=_im_idx, sl_idx=z, col_idx=x, row_idx=y)
+    #
+    #     # add point to the current slice
+    #     if z not in self.slice_points:
+    #         self.slice_points[z] = []
+    #     self.slice_points[z].append((x, y))
+    #
+    #     # update points display
+    #     self._update_points()
+    #
+    #     # # Temporarily disconnect the signal before adding points
+    #     # try:
+    #     #     custom_point.sigPressed.disconnect(self._point_pressed)
+    #     # except TypeError:
+    #     #     pass  # Signal was not connected
+    #     #
+    #     # # customize size and color. CAUTION: this will trigger the mouse_pressed event of custom_point
+    #     # custom_point.addPoints([{'pos': (x, y), 'brush': self.temp_brush, 'size': 10}])
+    #     #
+    #     # # add point to the view
+    #     # self.image_view.addItem(custom_point)
+    #     #
+    #     # # store point for future reference (e.g., clearing points)
+    #     # self.points.append(custom_point)
+    #     #
+    #     # # connect the point press event to the point
+    #     # custom_point.sigPressed.connect(self._point_pressed)
+    #
+    #     # FIXME: during testing and dev
+    #     print(f"Point added at: x={x}, y={y}, z={z}")
+    #
+    #     # return custom_point
+
+    def _update_points(self):
+        """
+        Update the display of points on the image view. Only display points for the current slice.
+
+        :return:
+        """
+        # get points for the current slice
+        current_slice = int(self.image_view.currentIndex)
+        points = self.slice_points.get(current_slice, [])
+
+        # update ScatterPlotItem
+        if len(points) > 0:
+            spots = [
+                {
+                    'pos': (point['voxel_col'], point['voxel_row']),
+                    'brush': self.selected_brush if point['is_selected'] else self.idle_brush,
+                }
+                for point in points
+            ]
+            self.scatter.setData(spots=spots)
+        else:
+            self.scatter.clear()
+
+    def _point_clicked(self, scatter, clicked_points):
+        """
+        Handle point click by toggling its selected flag. Notify the parent class about the clicked point.
+
+        :param scatter: The ScatterPlotItem object. (not used)
+        :param clicked_points: The list of clicked points (contains instances of Point).
+        """
+        if not clicked_points:
+            return
+
+        # assume only one point can be clicked (get the first point in the list)  # FIXME: iterate through list
+        clicked_point = clicked_points[0]
+        clicked_pos = clicked_point.pos()  # Get the (x, y) position of the point
+        current_slice = int(self.image_view.currentIndex)
+
+        # find the clicked point by position in the slice_points data structure
+        for point in self.slice_points.get(current_slice, []):
+            if point['voxel_col'] == clicked_pos[0] and point['voxel_row'] == clicked_pos[1]:
+                point['is_selected'] = not point['is_selected']  # toggle selection
+                self.current_point = point
+            else:
+                point['is_selected'] = False
+
+        if self.current_point is not None:
+            # update the display of points
+            self._update_points()
+            # notify the parent class about the selected point
+            self.point_clicked_signal.emit(point['id'], point['is_selected'], self.id, self.view_dir)
+
+    # def get_point_by_id_and_slice(self, point_id, slice_index):
+    #     """
+    #     Get the point with the specified ID from the specified slice.
+    #
+    #     :param point_id: str (unique ID of the point)
+    #     :param slice_index: int (slice index)
+    #     :return: dict (point data)
+    #     """
+    #     if slice_index in self.slice_points:
+    #         return self.slice_points[slice_index].get(point_id, None)
+    #     return None
+
+
+    # def _point_pressed(self, clicked_point, stacked_points, event):
+    #     """
+    #     :param clicked_point:
+    #     :param stacked_points:
+    #     :param event:
+    #     :return:
+    #     Handle point pressed event.
+    #     """
+    #
+    #     if self.point_im is not None and self.point_im.matches_event(event):
+    #         # only respond to the event if the interaction method matches (for example, shift + left click)
+    #         # FIXME: during testing and dev
+    #         print("point pressed")
+    #
+    #         if self.add_point_mode:
+    #             return
+    #
+    #         if self.pending_point_mode:
+    #             # if the point is in pending mode, then the point is being dragged to a new position
+    #             self.drag_point_mode = True
+    #         else:
+    #             # FIXME: need to handle case where multiple points are stacked on top of each other
+    #             # if len(stacked_points) > 0:
+    #             #     # assuming only one point is clicked at a time, grab the first point
+    #             #     clicked_point = stacked_points[0]
+    #             #     slice_index = clicked_point.z
+    #             self.set_selected(clicked_point)
+    #
+    #
+    #         # FIXME: during testing and dev
+    #         print(f"point clicked at position: {clicked_point.x}, {clicked_point.y}, Slice index: {clicked_point.z}")
+    #
+    #         self.drag_point_mode = True
+    #
+    #         # emit signal to notify the parent class that a point was clicked
+    #         # TODO
+
     def _mouse_press(self, event):
         """
         :param event:
         :return:
-        Capture mouse press event and handle painting and marking actions before passing the event back to pyqtgraph.
+        Capture mouse press event and handle painting and pointing actions before passing the event back to pyqtgraph.
         """
         # FIXME: during testing and dev
         print("Mouse pressed")
         print(f"Screen coordinates: {event.scenePos()}")
 
-        if self.paint_method is not None and self.paint_method.matches_event(event):
+        if self.image_view.getImageItem().image is None:
+            # nothing to do
+            return
+
+        if self.paint_im is not None and self.paint_im.matches_event(event):
             self.interaction_state = 'painting'
             self._mouse_move(event)
-        elif self.erase_method is not None and self.erase_method.matches_event(event):
+        elif self.erase_im is not None and self.erase_im.matches_event(event):
             self.interaction_state = 'erasing'
             self._mouse_move(event)
-        elif self.mark_method is not None and self.mark_method.matches_event(event):
-            self.interaction_state = 'marking'  # FIXME: needed?
-            if self.is_marking:
-                # add a marker at the clicked position
-                pos = event.scenePos()
-                img_item = self.image_view.getImageItem()  # should be same image referenced by self.background_image_index
-                background_image_data = self.array3D_stack[
-                    self.background_image_index]  # 3D array of data, optnly. transposed
-                background_image_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
-                if img_item is None or not img_item.sceneBoundingRect().contains(pos):
-                    pass
+        elif self.point_im is not None and self.point_im.matches_event(event):
+            # for example, if the shift key is currently pressed
+            self.interaction_state = 'pointing'  # FIXME: not used?
+            if self.add_point_mode:  # adding point
+                # add a point at the clicked position
+                new_point_id = self._add_point(event)
+                if new_point_id is not None:
+                    self.drag_point_mode = True  # user can drag the point to new position before mouse release
+                    # emit point created signal
+                    self.point_added_signal.emit(new_point_id, self.id, self.view_dir)
                 else:
-                    # transform the scene coordinates to 2D image coordinates
-                    plot_mouse_point = img_item.mapFromScene(pos)
-                    plot_x = int(plot_mouse_point.x())
-                    plot_y = int(plot_mouse_point.y())
-                    # FIXME: during testing and dev
-                    # print(f"Scene coordinates: x: {plot_x}, y: {plot_y}")
-
-                    # shape will return z, x, y here
-                    img_shape = background_image_data.shape  # shape of the 3D array, transposed from Image3D object
-                    # FIXME: during testing and dev
-                    # print(f"Image shape: x: {img_shape[1]}, y: {img_shape[2]}, z: {img_shape[0]}")
-                    plot_z = int(self.image_view.currentIndex)  # current slice index
-
-                    if self.display_convention == 'RAS':
-                        # radiological convention = RAS+ notation
-                        # (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
-                        # at the bottom of the screen?)
-                        # FIXME: here, we are not using the screenxy_to_imageijk() method of the image3D object because
-                        #  we are using the already transposed 3D array to diaplay the images. Essentially, we are treating
-                        #  the 3D array as if it were in the axial orientation.
-                        if background_image_obj.x_dir == 'R':
-                            voxel_col = plot_x
-                        else:  # 'L'
-                            voxel_col = img_shape[1] - 1 - plot_x
-                        if background_image_obj.y_dir == 'A':
-                            voxel_row = plot_y
-                        else:  # 'P'
-                            voxel_row = img_shape[2] - 1 - plot_y
-                        voxel_slice = plot_z
-
-                    # FIXME: during testing and dev
-                    # print(f"3D image coordinates: col: {voxel_col}, row: {voxel_row}, slice: {voxel_slice}")
-
-                    if 0 <= voxel_col < img_shape[1] and 0 <= voxel_row < img_shape[2] and 0 <= voxel_slice < img_shape[0]:
-                        # if coordinates are within image bounds
-                        self.add_marker(voxel_col, voxel_row)
-            elif self.selected_marker is not None:
-                self.interaction_state = 'dragging'
-                self._mouse_move(event)
+                    # pass the event back to pyqtgraph for any further processing
+                    self.original_mouse_press(event)
+            else:
+                # pass the event back to pyqtgraph for any further processing
+                self.original_mouse_press(event)
         else:
             self.interaction_state = None  # No interaction matches
 
-        # if self.interaction_state is not None:
-        #     self._mouse_move(event)
-
-        # pass the event back to pyqtgraph for any further processing
-        self.original_mouse_press(event)
-
-        # elif self.interaction_state == 'marking':
-        #
-
-        # # Paint action modifies self.temp_image (3D array) at the current slice
-        # if self.is_painting:
-        #     # Get current slice from ImageView
-        #     current_slice = int(self.image_view.currentIndex)
-        #     print(f"Current slice {current_slice}")
-        # elif self.is_marking:
-        #     if event.button() == Qt.LeftButton:
-        #         img_item = self.image_view.getImageItem()
-        #         pos = event.pos()
-        #         mouse_point = img_item.mapFromScene(pos)
-        #         if img_item is not None and img_item.sceneBoundingRect().contains(mouse_point):
-        #             # Transform the scene coordinates to image coordinates
-        #             img_shape = self.image3D_obj_stack[0].data.shape
-        #             x = int(pos.x())
-        #             y = int(pos.y())
-        #             z = int(self.image_view.currentIndex)  # Get the current slice index
-        #
-        #             # ensure coordinates are within image bounds
-        #             if 0 <= x < img_shape[0] and 0 <= y < img_shape[1] and 0 <= z < img_shape[2]:
-        #                 self.add_marker(x, y)
-        #
-        #             print(f"Point added at: x={x}, y={y}, z={z}")
-        #
-        # # propagate the event for any further processing
-        # event.ignore()
-
-        # if self.is_painting:
-        #     # Get current slice from ImageView
-        #     current_slice = int(self.image_view.currentIndex)
-        #     print(f"Current slice {current_slice}")
-        # elif self.is_marking:
-        #     if event.button() == Qt.LeftButton:
-
+            # pass the event back to pyqtgraph for any further processing
+            self.original_mouse_press(event)
 
     def _mouse_move(self, event):
         """
         :param event:
         :return:
         Update the coordinates label and crosshairs with the current mouse position, apply paint brush if painting,
-        move marker if dragging.
+        move point if dragging.
         """
 
         # position of the cursor in the scene
@@ -970,24 +1156,32 @@ class Viewport(QWidget):
                     coordinates_text += ", {:4.2f} ".format(value)
                 self.coordinates_label.setText(coordinates_text)
 
-                # if painting, erasing, or dragging marker
+                # if painting, erasing, or dragging point
+                # print(f"draging point mode: {self.drag_point_mode}, current point: {self.current_point}")
                 if self.interaction_state == 'painting':
                     self._apply_brush(voxel_col, voxel_row, True)
                 elif self.interaction_state == 'erasing':
                     self._apply_brush(voxel_col, voxel_row, False)
-                elif self.interaction_state == 'dragging':
+                elif self.drag_point_mode and self.current_point is not None:
+                    self.current_point['screen_x'] = int(pos.x())
+                    self.current_point['screen_y'] =  int(pos.y())
+                    self.current_point['voxel_col'] = voxel_col,  # voxel index into the 3D array
+                    self.current_point['voxel_row'] = voxel_row,  # voxel index into the 3D array
+
+                    # Update the ScatterPlotItem to reflect the new position
+                    self._update_points()
                     # FIXME: during testing and dev
-                    print("Dragging marker")
+                    print("Dragging point")
                     # # Get the position of the mouse
                     # img_item = self.image_view.getImageItem()
                     # mouse_point = img_item.mapFromScene(pos)
                     #
-                    # # Update the position of the marker
+                    # # Update the position of the point
                     # x = int(mouse_point.x())
                     # y = int(mouse_point.y())
                     #
-                    # # Move the marker to the new position
-                    # self.is_dragging_marker.setData(pos=[(x, y)], brush='r', size=10)
+                    # # Move the point to the new position
+                    # self.is_dragging_point.setData(pos=[(x, y)], brush='r', size=10)
                     pass
                 else:
                     # probably panning - pass the event back to pyqtgraph for any further processing
@@ -1001,12 +1195,14 @@ class Viewport(QWidget):
         """
         :param event:
         :return:
-        Disable painting, erasing, and dragging marker actions and pass the event back to pyqtgraph.
+        Disable painting, erasing, and dragging point actions and pass the event back to pyqtgraph.
         """
         # FIXME: during testing and dev
         print("Mouse Released")
 
         self.interaction_state = None
+        self.drag_point_mode = False
+
         # pass event back to pyqtgraph for any further processing
         self.original_mouse_release(event)
 

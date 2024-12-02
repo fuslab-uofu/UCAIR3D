@@ -16,20 +16,20 @@ class InteractionMethod:
        A combination of buttons and modifier keys can be used to define the interaction method.
        Examples:
             # Single button with a single modifier
-            paint_method = InteractionMethod(Qt.LeftButton, Qt.ShiftModifier)
+            paint_im = InteractionMethod(Qt.LeftButton, Qt.ShiftModifier)
 
             # Multiple buttons with a single modifier
-            paint_method = InteractionMethod([Qt.LeftButton, Qt.RightButton], Qt.ShiftModifier)
+            paint_im = InteractionMethod([Qt.LeftButton, Qt.RightButton], Qt.ShiftModifier)
 
             # Single button with multiple modifiers
-            paint_method = InteractionMethod(Qt.LeftButton, [Qt.ShiftModifier, Qt.ControlModifier])
+            paint_im = InteractionMethod(Qt.LeftButton, [Qt.ShiftModifier, Qt.ControlModifier])
 
             # Multiple buttons with multiple modifiers
-            paint_method = InteractionMethod([Qt.LeftButton, Qt.MiddleButton], [Qt.ShiftModifier, Qt.ControlModifier])
+            paint_im = InteractionMethod([Qt.LeftButton, Qt.MiddleButton], [Qt.ShiftModifier, Qt.ControlModifier])
 
             # Get readable names
-            print("Buttons:", paint_method.get_button_names())
-            print("Modifiers:", paint_method.get_modifier_names())
+            print("Buttons:", paint_im.get_button_names())
+            print("Modifiers:", paint_im.get_modifier_names())
     """
 
     def __init__(self, _buttons, _modifiers=None):
