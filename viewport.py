@@ -194,11 +194,14 @@ class Viewport(QWidget):
         # add image_view_layout to the main layout
         main_layout.addLayout(image_view_layout)
 
-        # create crosshair lines
-        self.horizontal_line = pg.InfiniteLine(angle=0, pen=pg.mkPen('r', width=0.5), movable=False)
-        self.vertical_line = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=0.5), movable=False)
+        # create lines for slice intersection guides
+        self.slice_line_width = 0.5
+        self.horizontal_line = pg.InfiniteLine(angle=0, pen=pg.mkPen('r', width=self.slice_line_width), movable=False)
+        self.vertical_line = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=self.slice_line_width), movable=False)
         self.horizontal_line_idx = 0
         self.vertical_line_idx = 0
+        self.horizontal_line_color = 'r'
+        self.vertical_line_color = 'r'
         self.image_view.addItem(self.horizontal_line, ignoreBounds=True)
         self.image_view.addItem(self.vertical_line, ignoreBounds=True)
         self.show_crosshairs = False
@@ -547,7 +550,9 @@ class Viewport(QWidget):
 
                 # update the crosshairs
                 self.horizontal_line.setPos(self.horizontal_line_idx)
+                self.horizontal_line.setPen(pg.mkPen(self.horizontal_line_color, width=self.slice_line_width))
                 self.vertical_line.setPos(self.vertical_line_idx)
+                self.vertical_line.setPen(pg.mkPen(self.vertical_line_color, width=self.slice_line_width))
 
         # refresh the combo box with the current layers in the stack.
         # try:
