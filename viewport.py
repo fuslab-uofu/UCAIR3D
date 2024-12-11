@@ -4,15 +4,14 @@ import re
 import shortuuid
 
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider, QComboBox
-from PyQt5.QtGui import QIcon, QFont, QCursor
-from PyQt5.QtCore import Qt, QEvent, QObject
+from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtCore import Qt, pyqtSignal
 
 from enumerations import ViewDir
 from paint_brush import PaintBrush
 from interaction_method import InteractionMethod
 
 from pyqtgraph import ScatterPlotItem
-from PyQt5.QtCore import pyqtSignal
 
 
 class CustomScatterPlotItem(pg.ScatterPlotItem):
@@ -148,20 +147,12 @@ class Viewport(QWidget):
         self.histogram_button = QPushButton()
         self.histogram_button.setCheckable(True)
         self.histogram_button.setChecked(False)
-        self.histogram_button.setFixedSize(24, 24)
+        self.histogram_button.setFixedSize(16, 16)
         histogram_icon = QIcon("..\\ui\\colorWheelIcon.svg")
         self.histogram_button.setIcon(histogram_icon)
         self.histogram_button.clicked.connect(self._toggle_histogram)
         top_layout.addWidget(self.histogram_button)
-        # crosshair visibility button
-        self.crosshair_button = QPushButton()
-        self.crosshair_button.setCheckable(True)
-        self.crosshair_button.setFixedSize(24, 24)
-        crosshair_icon = QIcon("..\\ui\\crosshair_white_icon.svg")
-        self.crosshair_button.setIcon(crosshair_icon)
-        self.crosshair_button.setIconSize(self.crosshair_button.size())
-        self.crosshair_button.clicked.connect(self._toggle_crosshairs)
-        top_layout.addWidget(self.crosshair_button)
+
         # add the top layout to the main layout (above the imageView)
         main_layout.addLayout(top_layout)
 
@@ -195,18 +186,29 @@ class Viewport(QWidget):
         main_layout.addLayout(image_view_layout)
 
         # create lines for slice intersection guides
+        self.axial_line_color = 'r'
+        self.sag_line_color = 'y'
+        self.cor_line_color = 'g'
         self.slice_line_width = 0.5
         self.horizontal_line = pg.InfiniteLine(angle=0, pen=pg.mkPen('r', width=self.slice_line_width), movable=False)
         self.vertical_line = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=self.slice_line_width), movable=False)
         self.horizontal_line_idx = 0
         self.vertical_line_idx = 0
-        self.horizontal_line_color = 'r'
-        self.vertical_line_color = 'r'
+        if self.view_dir == ViewDir.AX.dir:
+            self.horizontal_line.setPen(pg.mkPen(self.cor_line_color, width=self.slice_line_width))
+            self.vertical_line.setPen(pg.mkPen(self.sag_line_color, width=self.slice_line_width))
+        elif self.view_dir == ViewDir.COR.dir:
+            self.horizontal_line.setPen(pg.mkPen(self.axial_line_color, width=self.slice_line_width))
+            self.vertical_line.setPen(pg.mkPen(self.sag_line_color, width=self.slice_line_width))
+        else:  # "SAG"
+            self.horizontal_line.setPen(pg.mkPen(self.axial_line_color, width=self.slice_line_width))
+            self.vertical_line.setPen(pg.mkPen(self.cor_line_color, width=self.slice_line_width))
         self.image_view.addItem(self.horizontal_line, ignoreBounds=True)
         self.image_view.addItem(self.vertical_line, ignoreBounds=True)
-        self.show_crosshairs = False
-        self.horizontal_line.setVisible(self.show_crosshairs)
-        self.vertical_line.setVisible(self.show_crosshairs)
+        self.show_slice_guides = True  # default to showing slice guides
+        # but don't show them until an image is displayed
+        self.horizontal_line.setVisible(False)
+        self.vertical_line.setVisible(False)
 
         """ NOTE: the pyqtgraph ImageView object displays only one 3D image at a time. To have overlays, 2D slices 
         are added to the ImageView. For our Viewport object, the main/background image is the 3D array of the data
@@ -312,8 +314,14 @@ class Viewport(QWidget):
             self.image_view.getView().setAspectLocked(True, ratio=ratio)
             # start at middle slice
             self.current_slice_index = (int(self.array3D_stack[stack_position].shape[0] // 2))
+
+            # self.horizontal_line.setVisible(self.show_slice_guides)
+            # self.vertical_line.setVisible(self.show_slice_guides)
         else:
             self.array3D_stack[stack_position] = None
+
+            # self.horizontal_line.setVisible(False)
+            # self.vertical_line.setVisible(False)
 
         self.refresh()
 
@@ -491,6 +499,8 @@ class Viewport(QWidget):
 
         # the image stack may have empty slots, so we need to find the first non-empty image to display
         found_bottom_image = False
+        self.background_image_index = None
+
         for ind, im_obj in enumerate(self.image3D_obj_stack):
             if im_obj is None:
                 continue
@@ -548,11 +558,18 @@ class Viewport(QWidget):
                 self.image_view.setCurrentIndex(self.current_slice_index)
                 self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
-                # update the crosshairs
+        # update the crosshairs
+        # if self.image3D_obj_stack[self.background_image_index] is None:
+        if self.background_image_index is None:
+            # no image to display, so hide slice guides, even if visibility is set to True
+            self.horizontal_line.setVisible(False)
+            self.vertical_line.setVisible(False)
+        else:
+            self.horizontal_line.setVisible(self.show_slice_guides)
+            self.vertical_line.setVisible(self.show_slice_guides)
+            if self.show_slice_guides:
                 self.horizontal_line.setPos(self.horizontal_line_idx)
-                self.horizontal_line.setPen(pg.mkPen(self.horizontal_line_color, width=self.slice_line_width))
                 self.vertical_line.setPos(self.vertical_line_idx)
-                self.vertical_line.setPen(pg.mkPen(self.vertical_line_color, width=self.slice_line_width))
 
         # refresh the combo box with the current layers in the stack.
         # try:
@@ -744,12 +761,6 @@ class Viewport(QWidget):
             else:
                 self.image_view.clear()  # Clear the image view if the layer is empty
 
-    def _toggle_crosshairs(self):
-        """toggle crosshair visibility"""
-        self.show_crosshairs = not self.show_crosshairs
-        self.horizontal_line.setVisible(self.show_crosshairs)
-        self.vertical_line.setVisible(self.show_crosshairs)
-
     def _toggle_histogram(self):
         """toggle the visibility of the histogram/colormap/opacity widget"""
         histogram = self.image_view.getHistogramWidget()
@@ -764,78 +775,215 @@ class Viewport(QWidget):
         # self._set_histogram_colormap(self.image3D_obj_stack[self.active_image_index].colormap)
         self.opacity_slider.setVisible(not is_visible)
 
-    def imagecrs_to_plotxyz(self, voxel_col, voxel_row, voxel_slice):
+    def plotdatacr_to_plotxy(self, plot_data_col, plot_data_row):
         """
-        Taking into account the current display convention (RAS, etc.), find plot x,y coordinates from the i,j,k
-            coordinates of image3D object. Note that plot x,y are in the coordinate space of the array3D data, which
-            is transposed from the original image3D to match the orientation of the viewport.
+        Convert plot data coordinates to plot x and y coordinates. This method is used to convert the plot data
+        coordinates to the plot x and y coordinates that are used by the scatter plot item.
+
+        :param plot_data_col:
+        :param plot_data_row:
+        :return: plot_x, plot_y
+        """
+        image3D_obj = self.image3D_obj_stack[self.background_image_index]
+
+        xy = None
+        if image3D_obj is not None:
+            if self.display_convention == 'RAS':
+                if self.view_dir == ViewDir.AX.dir:
+                    # patient right is on the left of the screen, and patient posterior at the bottom of the screen
+                    if image3D_obj.x_dir == 'R':  # x-axis is inverted, so plot_x increases right to left
+                        plot_x = image3D_obj.num_cols - 1 - plot_data_col
+                    else:  # 'L'
+                        plot_x = plot_data_col
+                    if image3D_obj.y_dir == 'A':
+                        plot_y = plot_data_row
+                    else:  # 'P'
+                        plot_y = image3D_obj.num_rows - 1 - plot_data_row
+                elif self.view_dir == ViewDir.SAG.dir:
+                    # patient anterior is on the left of the screen, and patient inferior is at the bottom
+                    if image3D_obj.z_dir == 'S':
+                        # image3D slices increase front to back
+                        # plot data row increases bottom to top
+                        plot_y = plot_data_row
+                    else:  # 'I'
+                        plot_y = image3D_obj.num_slices - 1 - plot_data_row
+                    if image3D_obj.y_dir == 'A':
+                        # image3D voxel rows increase bottom to top
+                        # x-axis is inverted, so plot_col increases right to left
+                        plot_x = image3D_obj.num_rows - 1 - plot_data_col
+                    else:  # 'P'
+                        plot_x = plot_data_col
+                elif self.view_dir == ViewDir.COR.dir:
+                    # patient right is on the left of the screen, and patient inferior is at the bottom
+                    if image3D_obj.x_dir == 'R':
+                        # image3D columns increase right to left
+                        # x-axis is inverted, so plot_col also increases right to left
+                        plot_x = image3D_obj.num_cols - 1 - plot_data_col
+                    else:  # 'L'
+                        plot_x = plot_data_col
+                    if image3D_obj.z_dir == 'S':
+                        # image3D slices increase front to back
+                        # plot rows increase bottom to top
+                        plot_y = plot_data_row
+                    else:  # 'I'
+                        plot_y = image3D_obj.num_slices - 1 - plot_data_row
+
+                xy = np.array([plot_x, plot_y])
+
+        return xy
+
+    def plotxyz_to_plotdatacrs(self, plot_x, plot_y, plot_z):
+
+        image3D_obj = self.image3D_obj_stack[self.background_image_index]
+
+        crs = None
+        if image3D_obj is not None:
+            if self.display_convention == 'RAS':
+                if self.view_dir == ViewDir.AX.dir:
+                    # patient right is on the left of the screen, and patient posterior at the bottom of the screen
+                    if image3D_obj.x_dir == 'R':   # x-axis is inverted, so plot_x increases right to left
+                        plot_data_col = image3D_obj.num_cols - 1 - plot_x
+                    else:  # 'L'
+                        plot_data_col = plot_x
+                    if image3D_obj.y_dir == 'A':
+                        plot_data_row = plot_y
+                    else:  # 'P'
+                        plot_data_row = image3D_obj.num_rows - 1 - plot_y
+                    if image3D_obj.z_dir == 'S':
+                        plot_data_slice = plot_z
+                    else:  # 'I'
+                        plot_data_slice = image3D_obj.num_slices - 1 - plot_z
+                elif self.view_dir == ViewDir.SAG.dir:
+                    # patient anterior is on the left of the screen, and patient inferior is at the bottom
+                    if image3D_obj.z_dir == 'S':
+                        # image3D slices increase front to back
+                        # plot data row increases bottom to top
+                        plot_data_row = plot_y
+                    else:  # 'I'
+                        plot_data_row = image3D_obj.num_slices - 1 - plot_y
+                    if image3D_obj.x_dir == 'R':
+                        # image3D columns increase right to left
+                        # plot slice increases back to front *NOTE slicer does front to back here
+                        plot_data_slice = plot_z
+                        # voxel_slice = image3D_obj.num_cols - 1 - plot_col
+                    else:  # 'A'
+                        plot_data_slice = image3D_obj.num_cols - 1 - plot_z
+                        # voxel_slice = plot_col
+                    if image3D_obj.y_dir == 'A':
+                        # image3D voxel rows increase bottom to top
+                        # x-axis is inverted, so plot_col increases right to left
+                        plot_data_col = image3D_obj.num_rows - 1 - plot_x
+                    else:  # 'P'
+                        plot_data_col =  plot_x
+                elif self.view_dir == ViewDir.COR.dir:
+                    # patient right is on the left of the screen, and patient inferior is at the bottom
+                    if image3D_obj.x_dir == 'R':
+                        # image3D columns increase right to left
+                        # x-axis is inverted, so plot_col also increases right to left
+                        plot_data_col = image3D_obj.num_cols - 1 - plot_x
+                    else:  # 'L'
+                        plot_data_col = plot_x
+                    if image3D_obj.y_dir == 'A':
+                        # image3D rows increase bottom to top
+                        # plot slice increases front to back
+                        plot_data_slice = plot_z
+                    else:  # 'P'
+                        plot_data_slice = image3D_obj.num_rows - 1 - plot_z
+                    if image3D_obj.z_dir == 'S':
+                        # image3D slices increase front to back
+                        # plot rows increase bottom to top
+                        plot_data_row = plot_y
+                    else:  # 'I'
+                        plot_data_row = image3D_obj.num_slices - 1 - plot_y
+
+                crs = np.array([plot_data_col, plot_data_row, plot_data_slice])
+
+        return crs
+
+    def imagecrs_to_plotdatacrs(self, voxel_col, voxel_row, voxel_slice):
+        """
+        Taking into account the current display convention (RAS, etc.), find the plot data col,row,slice (crs)
+        coordinates from the image3D object data crs coordinates. Note that the plot data may be transposed from the
+        image3D to match the orientation of the viewport.
 
         :param voxel_col:
         :param voxel_row:
         :param voxel_slice:
         :return: crs np.array([plot_col, plot_row, plot_slice])
         """
-        return self.plotxyz_to_imagecrs(voxel_col, voxel_row, voxel_slice)  # a trick
+        # return self.plotdatacrs_to_imagecrs(voxel_col, voxel_row, voxel_slice)  # a trick
 
-        # image3D_obj = self.image3D_obj_stack[self.background_image_index]
-        #
-        # cplot_crs = None
-        #
-        # if image3D_obj is not None:
-        #     if self.display_convention == 'RAS':
-        #         if self.view_dir == ViewDir.AX.dir:
-        #             # patient right is on the left of the screen, and patient posterior at the bottom of the screen
-        #             if self.x_dir == 'R':
-        #                 plot_col = voxel_col
-        #             else:  # 'L'
-        #                 plot_col = image3D_obj.num_cols - 1 - voxel_col
-        #             if self.y_dir == 'A':
-        #                 plot_row = voxel_row
-        #             else:  # 'P'
-        #                 plot_row = image3D_obj.num_rows - 1 - voxel_row
-        #             if self.z_dir == 'S':
-        #                 plot_slice = voxel_slice
-        #             else:  # 'I'
-        #                 plot_slice = image3D_obj.num_slices - 1 - voxel_slice
-        #         elif self.view_dir == ViewDir.SAG.dir:
-        #             # patient anterior is on the left of the screen, and patient inferior is at the bottom
-        #             if self.x_dir == 'A':
-        #                 # voxel rows increase right to left
-        #                 plot_col = voxel_row  # x-axis is inverted, so plot_col also increases right to left
-        #             else:  # 'P'
-        #                 plot_col = image3D_obj.num_rows - 1 - voxel_row
-        #             if self.y_dir == 'S':
-        #                 # voxel slices increase bottom to top
-        #                 plot_slice = voxel_slice  # y-axis also increase bottom to top
-        #             else:  # 'I'
-        #                 plot_row = image3D_obj.num_slices - 1 - voxel_slice
-        #             if self.z_dir == 'R':
-        #                 # voxel columns increase front to back
-        #                 plot_slice = voxel_col
-        #             else:  # 'L'
-        #                 plot_slice = image3D_obj.num_cols - 1 - voxel_col
-        #         elif self.view_dir == ViewDir.COR.dir:
-        #             # patient right is on the left of the screen, and patient inferior is at the bottom
-        #             if self.x_dir == 'R':  # voxel columns increase right to left
-        #                 voxel_col = plot_col  # x-axis is inverted, so plot_col also increases right to left
-        #             else:  # 'L'
-        #                 voxel_col = image3D_obj.num_cols - 1 - plot_col
-        #             if self.y_dir == 'S':
-        #                 # voxel slices increase bottom to top
-        #                 voxel_slice = plot_row
-        #             else:  # 'I'
-        #                 voxel_slice = image3D_obj.num_slices - 1 - plot_row
-        #             if self.z_dir == 'P':
-        #                 # voxel rows increase front to back
-        #                 voxel_row = plot_slice
-        #             else:  # 'A'
-        #                 voxel_row = image3D_obj.num_rows - 1 - plot_slice
+        image3D_obj = self.image3D_obj_stack[self.background_image_index]
 
-    def plotxyz_to_imagecrs(self, plot_col, plot_row, plot_slice):
+        crs = None
+        if image3D_obj is not None:
+            if self.display_convention == 'RAS':
+                if self.view_dir == ViewDir.AX.dir:
+                    # patient right is on the left of the screen, and patient posterior at the bottom of the screen
+                    if image3D_obj.x_dir == 'R':  # voxel columns increase right to left
+                        plot_data_col = voxel_col  # x-axis is inverted, so plot_x also increases right to left
+                    else:  # 'L'
+                        plot_data_col = image3D_obj.num_cols - 1 - voxel_col
+                    if image3D_obj.y_dir == 'A':
+                        plot_data_row = voxel_row
+                    else:  # 'P'
+                        plot_data_row = image3D_obj.num_rows - 1 - voxel_row
+                    if image3D_obj.z_dir == 'S':
+                        plot_data_slice = voxel_slice
+                    else:  # 'I'
+                        plot_data_slice = image3D_obj.num_slices - 1 - voxel_slice
+                elif self.view_dir == ViewDir.SAG.dir:
+                    # patient anterior is on the left of the screen, and patient inferior is at the bottom
+                    if image3D_obj.z_dir == 'S':
+                        # image3D slices increase front to back
+                        # plot data row increases bottom to top
+                        plot_data_row = voxel_slice
+                    else:  # 'I'
+                        plot_data_row = image3D_obj.num_slices - 1 - voxel_slice
+                    if image3D_obj.x_dir == 'R':
+                        # image3D columns increase right to left
+                        # plot slice increases back to front *NOTE slicer does front to back here
+                        plot_data_slice = voxel_col
+                        # voxel_slice = image3D_obj.num_cols - 1 - plot_col
+                    else:  # 'A'
+                        plot_data_slice = image3D_obj.num_cols - 1 - voxel_col
+                        # voxel_slice = plot_col
+                    if image3D_obj.y_dir == 'A':
+                        # image3D voxel rows increase bottom to top
+                        # x-axis is inverted, so plot_col increases right to left
+                        plot_data_col = image3D_obj.num_rows - 1 - voxel_row
+                    else:  # 'P'
+                        plot_data_col = voxel_row
+                elif self.view_dir == ViewDir.COR.dir:
+                    # patient right is on the left of the screen, and patient inferior is at the bottom
+                    if image3D_obj.x_dir == 'R':
+                        # image3D columns increase right to left
+                        # x-axis is inverted, so plot_col also increases right to left
+                        plot_data_col = voxel_col
+                    else:  # 'L'
+                        plot_data_col = image3D_obj.num_cols - 1 - voxel_col
+                    if image3D_obj.y_dir == 'A':
+                        # image3D rows increase bottom to top
+                        # plot slice increases front to back
+                        plot_data_slice = voxel_row
+                    else:  # 'P'
+                        plot_data_slice = image3D_obj.num_rows - 1 - voxel_row
+                    if image3D_obj.z_dir == 'S':
+                        # image3D slices increase front to back
+                        # plot rows increase bottom to top
+                        plot_data_row = voxel_slice
+                    else:  # 'I'
+                        plot_data_row = image3D_obj.num_slices - 1 - voxel_slice
+
+                crs = np.array([plot_data_col, plot_data_row, plot_data_slice])
+
+        return crs
+
+    def plotdatacrs_to_imagecrs(self, plot_col, plot_row, plot_slice):
         """
-        Taking into account the current display convention (RAS, etc.), find i,j,k (voxel) coordinates of image3D
-            object from the plot x,y coordinates. Note that plot x,y are in the coordinate space of the array3D data,
-            which is transposed from the original image3D to match the orientation of the viewport.
+        Taking into account the current display convention (RAS, etc.), find col,row,slice (crs) coordinates of image3D
+            object from the plot data crs coordinates. Note that plot crs are in the coordinate space of the plot data,
+            which may be transposed from the original image3D to match the orientation of the viewport.
 
         :param plot_col:
         :param plot_row:
@@ -866,23 +1014,23 @@ class Viewport(QWidget):
                     if image3D_obj.z_dir == 'S':
                         # image3D slices increase front to back
                         # plot row increases bottom to top
-                        voxel_row = plot_slice
+                        voxel_row = image3D_obj.num_cols - 1 - plot_col
                     else:  # 'I'
-                        voxel_row = image3D_obj.num_slices - 1 - plot_slice
+                        voxel_row = plot_col
                     if image3D_obj.x_dir == 'R':
                         # image3D columns increase right to left
                         # plot slice increases back to front *NOTE slicer does front to back here
-                        voxel_slice = plot_col
+                        voxel_slice = plot_row
                         # voxel_slice = image3D_obj.num_cols - 1 - plot_col
                     else:  # 'A'
-                        voxel_slice = image3D_obj.num_cols - 1 - plot_col
+                        voxel_slice = image3D_obj.num_rows - 1 - plot_row
                         # voxel_slice = plot_col
                     if image3D_obj.y_dir == 'A':
                         # image3D voxel rows increase bottom to top
                         # x-axis is inverted, so plot_col increases right to left
-                        voxel_col = plot_row
+                        voxel_col = plot_slice
                     else:  # 'P'
-                        voxel_col = image3D_obj.num_rows - 1 - plot_row
+                        voxel_col = image3D_obj.num_slices - 1 - plot_slice
                 elif self.view_dir == ViewDir.COR.dir:
                     # patient right is on the left of the screen, and patient inferior is at the bottom
                     if image3D_obj.x_dir == 'R':
@@ -908,87 +1056,15 @@ class Viewport(QWidget):
 
         return crs
 
-    def plot_xy_to_data3D_cr(self, x, y):
-        """
-        Convert the plot x, y coordinates to voxel coordinates (col, row) in the array3D object.
-
-        :param x:
-        :param y:
-        :return: voxel_col, voxel_row
-        """
-        #  Here, we are not using the screenxy_to_imageijk() method of the image3D object because
-        #  we are using the already transposed 3D array to display the images. Essentially, we are treating
-        #  the 3D array as if it were in the axial orientation.
-        if self.background_image_index is None or self.image3D_obj_stack[self.background_image_index] is None:
-            return None
-
-        voxel_col_data3D = None
-        voxel_row_data3D = None
-
-        # get the array3D object
-        # FIXME: use the image specified by point_layer_index, not necessarily the background_image_index?
-        img_item = self.image_view.getImageItem()  # the image item of the ImageView widget
-        orig_img_3D = self.array3D_stack[self.background_image_index]  # 3D array of data, optionally transposed
-        data_3D = self.image3D_obj_stack[self.background_image_index]  # image3D object
-        data_3D_shape = data_3D.shape  # returns (slices, rows, cols)?
-
-        # get the voxel coordinates
-
-        if self.display_convention == 'RAS':
-            # radiological convention = RAS+ notation
-            # (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
-            # at the bottom of the screen?)
-            if self.view_dir == ViewDir.AX.dir:
-                # this array3D is oriented as: cols=cols[orig_img_3D], rows=rows[orig_img_3D], slices=slices[orig_img_3D],
-                # data_3D_shape = (slices[data_3D], rows[data_3D], cols[data_3D]), so
-                #              = (slices[orig_img_3D], rows[orig_img_3D], cols[orig_img_3D])
-                if orig_img_3D.x_dir == 'R':
-                    voxel_col_data3D = x
-                else:  # 'L'
-                    voxel_col_data3D = data_3D_shape[2] - 1 - x
-                if orig_img_3D.y_dir == 'A':
-                    voxel_row_image = y
-                else:  # 'P'
-                    voxel_row_data3D = data_3D_shape[1] - 1 - y
-            elif self.view_dir == ViewDir.COR.dir:
-                # this array3D is oriented as: cols=cols[orig_img_3D], rows=slices[orig_img_3D], slices=rows[orig_img_3D],
-                # data_3D_shape = (slices[data_3D], rows[data_3D], cols[data_3D]), so
-                #               = (rows[orig_img_3D], cols[orig_img_3D], slices[orig_img_3D])
-                if orig_img_3D.x_dir == 'R':
-                    voxel_col_data3D = x
-                else:
-                    voxel_col_data3D = data_3D_shape[2] - 1 - x
-                if orig_img_3D.z_dir == 'S': # 'S' or 'I'
-                    voxel_row_data3D = y
-                else:  # 'I'
-                    voxel_row_data3D = data_3D_shape[1] - 1 - y
-            elif self.view_dir == ViewDir.SAG.dir:
-                # this array3D is oriented as: cols=rows[orig_img_3D], rows=slices[orig_img_3D], slices=cols[orig_img_3D],
-                # data_3D_shape = (slices[data_3D], rows[data_3D], cols[data_3D]), so
-                #               = (cols[orig_img_3D], slices[orig_img_3D], rows[orig_img_3D])
-                if orig_img_3D.y_dir == 'A':
-                    voxel_col_data3D = x
-                else:
-                    voxel_col_data3D = data_3D_shape[2] - 1 - x
-                if orig_img_3D.z_dir == 'S':
-                    voxel_row_data3D = y
-                else:
-                    voxel_row_data3D = data_3D_shape[1] - 1 - y
-
-        else:  # 'LAS'  # TODO
-            pass
-
-        return voxel_col_data3D, voxel_row_data3D
-
     def _mouse_press(self, event):
         """
-        Capture mouse press event and handle painting and pointing actions before passing the event back to pyqtgraph.
+        Capture mouse press event and handle painting point-related actions before passing the event back to pyqtgraph.
 
         :param event:
         :return:
         """
         # FIXME: during testing and dev
-        print(f"_mouse_press: {event.scenePos()}")
+        # print(f"_mouse_press scene: {event.scenePos()}")
 
         img_item = self.image_view.getImageItem()
         if img_item is None:
@@ -1010,8 +1086,19 @@ class Viewport(QWidget):
                     plot_xy = img_item.mapFromScene(scene_xy)
                     plot_x = int(plot_xy.x())
                     plot_y = int(plot_xy.y())
+                    # FIXME: during testing and dev
+                    print(f"_mouse_press plot coordinates: x: {plot_x}, y: {plot_y}")
+
+                    plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
+                    # FIXME: during testing and dev
+                    print(f"_mouse_press plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
+
+                    image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
+                    # FIXME: during testing and dev
+                    print(f"_mouse_press image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+
                     # add a point at the clicked screen position
-                    new_point = self.add_point(plot_x, plot_y, self.current_slice_index)
+                    new_point = self.add_point(plot_x, plot_y, plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
                     if new_point is not None:
                         # set this new point as the selected point
                         self.select_point(new_point, False)
@@ -1066,6 +1153,7 @@ class Viewport(QWidget):
             plot_mouse_point = img_item.mapFromScene(scene_xy_qpoint)
             plot_x = int(plot_mouse_point.x())
             plot_y = int(plot_mouse_point.y())
+
             # FIXME: during testing and dev
             print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
 
@@ -1075,13 +1163,18 @@ class Viewport(QWidget):
             #  the "depth" dimension for 3D data). So I have reshaped the 3D arrays such that the first dimension is
             #  the z-axis, the second is the x-axis, and the third is the y-axis.
 
-            image_crs = self.plotxyz_to_imagecrs(plot_x, plot_y, self.current_slice_index)
+            plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
+
+            # FIXME: during testing and dev
+            print(f"Plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
+
+            image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
 
             # FIXME: during testing and dev
             print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
             # get the value of all voxels at this position
-            voxel_values = [data_array[self.current_slice_index, plot_x, plot_y]]  # data array is [slices, rows, cols]
+            # voxel_values = [data_array[plot_data_crs[0], plot_data_crs[1], plot_data_crs[2]]]
             # TODO
             # data_arrays = [arr for arr in self.array3D_stack if arr is not None]
             # if len(data_arrays) > 1:
@@ -1093,10 +1186,10 @@ class Viewport(QWidget):
             # print(f"canvas: {self.imageItem2D_canvas.image[x, y]}")
 
             # update the coordinates label
-            coordinates_text = "col:{:3d}, row:{:3d}, slice:{:3d}".format(plot_x, plot_y, self.current_slice_index)
+            coordinates_text = "col:{:3d}, row:{:3d}, slice:{:3d}".format(image_crs[0], image_crs[1], image_crs[2])
             # append voxel values for each image
-            for value in voxel_values:
-                coordinates_text += ", {:4.2f} ".format(value)
+            # for value in voxel_values:
+            #     coordinates_text += ", {:4.2f} ".format(value)
             self.coordinates_label.setText(coordinates_text)
 
             # if painting, erasing, or dragging point
@@ -1109,12 +1202,20 @@ class Viewport(QWidget):
                 # dragging point
                 self.point_moved = True
                 # FIXME: during testing and dev
-                # print(f"_mouse_move voxels: {plot_x}, {plot_y}, {slice_index}")
-                self.selected_point['plot_col'] = plot_x  # voxel index into the 3D array
-                self.selected_point['plot_row'] = plot_y  # voxel index into the 3D array
+                print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
+                print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
+                self.selected_point['plot_x'] = plot_x  # voxel index into the 3D array
+                self.selected_point['plot_y'] = plot_y  # voxel index into the 3D array
+                self.selected_point['plot_data_col']: plot_data_crs[0]# voxel index into the 3D plot data
+                self.selected_point['plot_data_row']: plot_data_crs[1]# voxel index into the 3D plot data
+                self.selected_point['plot_data_slice']: plot_data_crs[2]# voxel index into the 3D plot data
+                self.selected_point['image_col'] = image_crs[0]  # voxel index into the 3D array
+                self.selected_point['image_row'] = image_crs[1]
+                self.selected_point['image_slice'] = image_crs[2]
 
                 # update the ScatterPlotItem to reflect the new position
                 self._update_points_display()
+                self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
             else:
                 # probably panning - pass the event back to pyqtgraph for any further processing
                 self.original_mouse_move(event)
@@ -1135,9 +1236,9 @@ class Viewport(QWidget):
         self.drag_point_mode = False
 
         # notify parent that point was moved
-        if self.selected_point is not None and self.point_moved:
-            self.point_moved = False
-            self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
+        # if self.selected_point is not None and self.point_moved:
+        #     self.point_moved = False
+        #     self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
 
         # pass event back to pyqtgraph for any further processing
         self.original_mouse_release(event)
@@ -1280,58 +1381,40 @@ class Viewport(QWidget):
         # # reconnect the slot
         # self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
-    def add_point(self, plot_col, plot_row, plot_slice, new_id=None):
+    def add_point(self, plot_x, plot_y, plot_data_col, plot_data_row, plot_data_slice, new_id=None):
         """
-        :param plot_col:
-        :param plot_row:
-        :param plot_slice:
-        :param new_id: str (optional, unique id for the new point)
+        :param plot_data_col:
+        :param plot_data_row:
+        :param plot_data_slice:
+        :param new_id: str (optional, unique id for the new point, for same point id in multiple viewports [landmarks])
         :return: new_point
         """
         new_point = None
 
         # FIXME: use the image specified by point_layer_index, not necessarily the background_image_index?
-        img_item = self.image_view.getImageItem()  # the image item of the ImageView widget
+        # img_item = self.image_view.getImageItem()  # the image item of the ImageView widget
         array3D = self.array3D_stack[self.background_image_index]  # 3D array of data, optionally transposed
-        image3D_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
-
-        # FIXME: during testing and dev
-        # print(f"Scene coordinates: x: {plot_col}, y: {plot_row}")
+        # image3D_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
 
         # shape is in the form (slices, cols, rows)
         img_shape = array3D.shape  # shape of the 3D array, transposed from Image3D object
 
         # FIXME: during testing and dev
-        # print(f"Image shape: x: {img_shape[1]}, y: {img_shape[2]}, z: {img_shape[0]}")
-
-        # (voxel_col, voxel_row) = self.plot_coly_to_voxel_colrow_data_3D(plot_col, plot_row)
-
-        # if self.display_convention == 'RAS':
-        #     # radiological convention = RAS+ notation
-        #     # (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
-        #     # at the bottom of the screen?)
-        #     # Here, we are NOT using the screenxy_to_imageijk() method of the image3D object because
-        #     #  we are using the already-transposed 3D array data to display the images. We are finding the voxel
-        #     # indices for this point in the 3D array. The 3D array is oriented such that columns are the x-axis,
-        #     # rows are the y-axis, and slices are the z-axis.
-        #     if img_obj.x_dir == 'R':
-        #         voxel_col = plot_col
-        #     else:  # 'L'
-        #         voxel_col = img_shape[1] - 1 - plot_col
-        #     if img_obj.y_dir == 'A':
-        #         voxel_row = plot_row
-        #     else:  # 'P'
-        #         voxel_row = img_shape[2] - 1 - plot_row
-        #     voxel_slice = slice_index
+        print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
 
         # FIXME: during testing and dev
-        # print(f"3D image coordinates: col: {voxel_col}, row: {voxel_row}, slice: {voxel_slice}")
+        print(f"Plot data coordinates: col: {plot_data_col}, row: {plot_data_row}, slice: {plot_data_slice}")
 
-        if (0 <= plot_col < img_shape[1] and 0 <= plot_row < img_shape[2] and
-                0 <= plot_slice < img_shape[0]):
+        if (0 <= plot_data_col < img_shape[1] and 0 <= plot_data_row < img_shape[2] and
+                0 <= plot_data_slice < img_shape[0]):
+            image_crs = self.plotdatacrs_to_imagecrs(plot_data_col, plot_data_row, plot_data_slice)
+
+            # FIXME: during testing and dev
+            print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+
             # if coordinates are within image bounds
-            if plot_slice not in self.slice_points:
-                self.slice_points[plot_slice] = []
+            if plot_data_slice not in self.slice_points:
+                self.slice_points[plot_data_slice] = []
             if new_id is not None:
                 # use the provided id
                 point_id = new_id
@@ -1341,13 +1424,18 @@ class Viewport(QWidget):
                 # FIXME: check to see if this id is already in use (is that possible?)
             # add the point with additional metadata
             new_point = {
-                'plot_col': plot_col,  # voxel index into the 3D plot data
-                'plot_row': plot_row,  # voxel index into the 3D plot data
-                'plot_slice': plot_slice,  # voxel index into the 3D plot data
+                'plot_x': plot_x,
+                'plot_y': plot_y,
+                'plot_data_col': plot_data_col,      # voxel index into the 3D plot data
+                'plot_data_row': plot_data_row,      # voxel index into the 3D plot data
+                'plot_data_slice': plot_data_slice,  # voxel index into the 3D plot data
                 'id': point_id,
+                'image_col': image_crs[0],      # voxel index into the image3D object data
+                'image_row': image_crs[1],      # voxel index into the image3D object data
+                'image_slice': image_crs[2],    # voxel index into the image3D object data
                 'is_selected': False  # might not be necessary if only one point can be selected at a time
             }
-            self.slice_points[plot_slice].append(new_point)
+            self.slice_points[plot_data_slice].append(new_point)
 
         # # update points display
         # self._update_points_display()
@@ -1421,7 +1509,7 @@ class Viewport(QWidget):
         if len(points) > 0:
             spots = [
                 {
-                    'pos': (point['plot_col'], point['plot_row']), 'data': point,
+                    'pos': (point['plot_x'], point['plot_y']), 'data': point,
                     'brush': self.selected_brush if point['is_selected'] else self.idle_brush,
                 }
                 for point in points
@@ -1444,10 +1532,10 @@ class Viewport(QWidget):
         if point is not None:
             if self.selected_point is not None:
                 # deselect previously selected point
-                self.selected_point['is_selected'] = False  # FIXME: this property probably not needed
-            point['is_selected'] = True  # FIXME: this property probably not needed
+                self.selected_point['is_selected'] = False
+            point['is_selected'] = True
             self.selected_point = point
-            self.current_slice_index = point['plot_slice']
+            self.current_slice_index = point['plot_data_slice']
             self.refresh()
             if notify:
                 self.point_selected_signal.emit(point, self.id, self.view_dir)
@@ -1461,8 +1549,8 @@ class Viewport(QWidget):
         :param event:
         :return:
         """
-        # only respond to the event if the interaction method matches (for example, shift + left click)
         if self.point_im is not None and self.point_im.matches_event(event):
+            # only respond to the event if the interaction method matches (for example, shift + left click)
             if point is not None:
                 is_selected = point.get('is_selected')
                 if not is_selected:
