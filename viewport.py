@@ -60,7 +60,7 @@ class Viewport(QWidget):
     The calling class must also provide the maximum number of image allowed in the stack.
     A viewport is a subclass of QWidget and can be added to a layout in a QMainWindow.
     """
-    # notify parent that a point has been added
+    # signals to notify parent class of changes in the viewport
     point_added_signal = pyqtSignal(object, object, object)
     point_selected_signal = pyqtSignal(object, object, object)
     point_moved_signal = pyqtSignal(object, object, object)
@@ -68,7 +68,7 @@ class Viewport(QWidget):
 
 
     def __init__(self, parent, _id, _view_dir, _num_vols, _paint_method=None, _erase_method=None, _point_method=None,
-                 _zoom_method=None, _pan_method=None, _window_method=None):
+                 _zoom_method=None, _pan_method=None, _window_method=None, _alpha_blending=False):
         super().__init__()
 
         self.parent = parent
@@ -111,7 +111,7 @@ class Viewport(QWidget):
         # convenience reference to the background image item
         self.background_image_index = None
         # keep track of the active layer for histogram, colormap, and opacity settings interaction
-        self.active_image_index = None  # default to the first layer (background)
+        self.active_image_index = 0  # default to the first layer (background)
         self.canvas_layer_index = None  # the layer that is currently being painted on
         self.point_layer_index = None  # the layer that points are currently being added to
         self.current_slice_index = 0
@@ -126,32 +126,30 @@ class Viewport(QWidget):
         # initialize widgets and their slots -------------------------------------
         # the main layout for this widget ----------
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         # horizontal layout for the coordinates label and tool buttons ----------
         top_layout = QHBoxLayout()
         # coordinates label
-        self.coordinates_label = QLabel("Coordinates: ", self)
+        self.coordinates_label = QLabel("", self)
         font = QFont("Segoe UI", 9)
         font.setItalic(True)
         self.coordinates_label.setFont(font)
+        # self.coordinates_label.setAlignment(Qt.AlignVCenter)
         top_layout.addWidget(self.coordinates_label)
-        # layer selection combo box
-        self.layer_selector = QComboBox(self)
-        self.layer_selector.addItems([f"Layer {i}" for i in range(self.num_vols_allowed)])
-        self.layer_selector.currentIndexChanged.connect(self._layer_selection_changed)
-        self.layer_selector.setVisible(False)
-        # top_layout.addWidget(self.layer_selector)
+
         # add spacing between the buttons and right edge
         top_layout.addStretch()
         # histogram visibility button
-        self.histogram_button = QPushButton()
-        self.histogram_button.setCheckable(True)
-        self.histogram_button.setChecked(False)
-        self.histogram_button.setFixedSize(16, 16)
-        histogram_icon = QIcon("..\\ui\\colorWheelIcon.svg")
-        self.histogram_button.setIcon(histogram_icon)
-        self.histogram_button.clicked.connect(self._toggle_histogram)
-        top_layout.addWidget(self.histogram_button)
+        # self.histogram_button = QPushButton()
+        # self.histogram_button.setCheckable(True)
+        # self.histogram_button.setChecked(False)
+        # self.histogram_button.setFixedSize(16, 16)
+        # histogram_icon = QIcon("..\\ui\\colorWheelIcon.svg")
+        # self.histogram_button.setIcon(histogram_icon)
+        # self.histogram_button.clicked.connect(self._toggle_histogram)
+        # top_layout.addWidget(self.histogram_button)
 
         # add the top layout to the main layout (above the imageView)
         main_layout.addLayout(top_layout)
@@ -171,18 +169,6 @@ class Viewport(QWidget):
         self.image_view.ui.menuBtn.setVisible(False)  # hide these for now
         self.image_view.ui.roiBtn.setVisible(False)  # hide these for now
         image_view_layout.addWidget(self.image_view, stretch=2)
-        # transparency slider (vertical orientation)
-        slider_layout = QVBoxLayout()
-        self.opacity_slider = QSlider(Qt.Vertical)
-        self.opacity_slider.setRange(0, 100)  # Slider values from 0 to 100
-        self.opacity_slider.setValue(100)  # Default to fully opaque
-        self.opacity_slider.setTickPosition(QSlider.TicksRight)
-        self.opacity_slider.setTickInterval(10)
-        self.opacity_slider.valueChanged.connect(self._update_opacity)
-        slider_layout.addWidget(self.opacity_slider, alignment=Qt.AlignHCenter)
-        image_view_layout.addLayout(slider_layout, stretch=0)
-        self.opacity_slider.setVisible(False)
-        # add image_view_layout to the main layout
         main_layout.addLayout(image_view_layout)
 
         # create lines for slice intersection guides
@@ -221,6 +207,7 @@ class Viewport(QWidget):
         self.image3D_obj_stack = [None] * self.num_vols_allowed  # Image3D objects
         self.array3D_stack = [None] * self.num_vols_allowed  # image data 3D arrays
         # image data 2D arrays (slices) - one less than total number of images allowed because these are overlays
+        # and 3D background image is always displayed first in the image_view
         self.array2D_stack = [pg.ImageItem() for _ in range(self.num_vols_allowed)]
         for i in range(0, self.num_vols_allowed):
             self.image_view.view.addItem(self.array2D_stack[i])
@@ -236,7 +223,7 @@ class Viewport(QWidget):
         self.image_view.getView().addItem(self.scatter)
 
         # differentiate between user interacting with histogram widget and histogram updated by the viewport
-        self.is_user_histogram_interaction = True
+        # self.is_user_histogram_interaction = True
         # self.image_view.getHistogramWidget().sigLevelChangeFinished.connect(self._update_image_object)
         # self.image_view.getHistogramWidget().sigLookupTableChanged.connect(self._reapply_lut)
 
@@ -264,11 +251,11 @@ class Viewport(QWidget):
 
     def add_layer(self, image, stack_position):
         """
+        Update the stack of 3D images with a new 3D image for this viewPort.
+        image = None is allowed and will clear the layer at the specified position.
         :param image:
         :param stack_position:
         :return:
-        Update the stack of 3D images with a new 3D image for this viewPort.
-        image = None is allowed and will clear the layer at the specified position.
         """
 
         if stack_position > self.num_vols_allowed:
@@ -315,8 +302,9 @@ class Viewport(QWidget):
             # start at middle slice
             self.current_slice_index = (int(self.array3D_stack[stack_position].shape[0] // 2))
 
-            # self.horizontal_line.setVisible(self.show_slice_guides)
-            # self.vertical_line.setVisible(self.show_slice_guides)
+            self.refresh_preserve_extent()
+            # emit signal to notify parent class that the slice has changed (to update the slice guides in other vps)
+            self.slice_changed_signal.emit(self.id, self.current_slice_index)
         else:
             self.array3D_stack[stack_position] = None
 
@@ -342,7 +330,7 @@ class Viewport(QWidget):
                 img_shape = array3D.shape
                 if 0 <= slice_index < img_shape[0]:
                     self.current_slice_index = slice_index
-                    self.refresh()
+                    self.refresh_preserve_extent()
 
     def remove_layer(self, stack_position):
         # FIXME: this wipes out the image3D object! That is not what we want to do
@@ -490,11 +478,29 @@ class Viewport(QWidget):
         """Set the canvas layer for painting."""
         self.canvas_layer_index = index
 
+    def refresh_preserve_extent(self):
+        """
+        Refresh the viewport without changing the current view extent.
+        """
+        # save the current view state (extent)
+        view_box = self.image_view.getView()
+        current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
+
+        self.refresh()
+
+        # restore the view range
+        view_box.setRange(
+            xRange=current_range[0],
+            yRange=current_range[1],
+            padding=0  # Disable padding to restore exact range
+        )
+
     def refresh(self):
         """
         Should be called when one of the images displayed in the viewport changes. Sets the image item, and connects the
         histogram widget to the image item. Also updates the overlay images.
         """
+
         self.image_view.clear()
 
         # the image stack may have empty slots, so we need to find the first non-empty image to display
@@ -509,7 +515,7 @@ class Viewport(QWidget):
                     # this is the bottom image in the stack and will be set as the 3D background image item in the
                     # image view
                     im_data = self.array3D_stack[ind]  # the (optionally transposed) 3D array
-                    self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
+                    # self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
                     # setImage causes the z-slider slot to be called, which resets the current slice index to 0
                     # disconnect slot to prevent this from happening
                     try:
@@ -519,6 +525,14 @@ class Viewport(QWidget):
                         # if the slot was not connected, ignore the error
                         pass
                     self.image_view.setImage(im_data)
+                    # FIXME: set aspect ratio based on base image? What about overlay?
+                    if self.view_dir == ViewDir.AX.dir:
+                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dx / im_obj.dy)
+                    elif self.view_dir == ViewDir.COR.dir:
+                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dx / im_obj.dz)
+                    else:  # "SAG"
+                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dy / im_obj.dz)
+
                     self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
                     # FIXME: testing
@@ -541,7 +555,7 @@ class Viewport(QWidget):
                         # x increases from screen right to left if RAS+ notation (and patient is HFS?)
                         self.image_view.getImageItem().getViewBox().invertX(True)
 
-                    self.is_user_histogram_interaction = True
+                    # self.is_user_histogram_interaction = True
                     self.background_image_index = ind
                     found_bottom_image = True
                 else:
@@ -559,7 +573,6 @@ class Viewport(QWidget):
                 self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
         # update the crosshairs
-        # if self.image3D_obj_stack[self.background_image_index] is None:
         if self.background_image_index is None:
             # no image to display, so hide slice guides, even if visibility is set to True
             self.horizontal_line.setVisible(False)
@@ -571,31 +584,15 @@ class Viewport(QWidget):
                 self.horizontal_line.setPos(self.horizontal_line_idx)
                 self.vertical_line.setPos(self.vertical_line_idx)
 
-        # refresh the combo box with the current layers in the stack.
-        # try:
-        #     # disconnect the slot before making changes
-        #     self.layer_selector.currentIndexChanged.disconnect(self._layer_selection_changed)
-        # except TypeError:
-        #     # if the slot was not connected, ignore the error
-        #     pass
-        # # clear the combo box
-        # self.layer_selector.clear()
-        # # add the main background image
-        # self.layer_selector.addItem("Background ")
-        # # add overlay layers if they exist
-        # for i in range(1, self.num_vols_allowed):
-        #     if self.image3D_obj_stack[i] is not None:
-        #         self.layer_selector.addItem(f"Overlay {i}")
-        #     else:
-        #         self.layer_selector.addItem(f"Empty Layer {i}")
-        # # reconnect the slot after making changes
-        # self.layer_selector.currentIndexChanged.connect(self._layer_selection_changed)
         self._update_points_display()
+
         self.image_view.show()
 
     #  -----------------------------------------------------------------------------------------------------------------
     #  "Private" methods -----------------------------------------------------------------------------------------------
     #  -----------------------------------------------------------------------------------------------------------------
+
+
 
     def _slice_changed(self):
         """
@@ -603,7 +600,9 @@ class Viewport(QWidget):
         :return:
         """
         self.current_slice_index = self.image_view.currentIndex
-        self.refresh()
+
+        self.refresh_preserve_extent()
+
         self.slice_changed_signal.emit(self.id, self.current_slice_index)
 
     def _update_overlays(self):
@@ -644,13 +643,13 @@ class Viewport(QWidget):
             overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
             overlay_image_item = self.array2D_stack[layer_index]
             # apply the slice to the overlay ImageItem
-            self.is_user_histogram_interaction = False
+            # self.is_user_histogram_interaction = False
             overlay_image_item.setImage(overlay_slice)
             # Set the levels to prevent LUT rescaling based on the slice content
             overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
             overlay_image_item.setOpacity(overlay_image_object.alpha)
             overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
-            self.is_user_histogram_interaction = True
+            # self.is_user_histogram_interaction = True
 
             # def _set_overlay_slice(self, layer_index):
             #     """Set the overlay image with the current slice from the array3D."""
@@ -673,15 +672,17 @@ class Viewport(QWidget):
             #     base_image_item = self.image_view.getImageItem()  # Assuming the base image is layer 0
             #     base_image_item.setLookupTable(self.image3D_obj_stack[0].colormap)  # Reapply the base image LUT
 
-            self.is_user_histogram_interaction = True
+            # self.is_user_histogram_interaction = True
         # else:
         #     self.array2D_stack[layer_index].clear()
 
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""
-        if self.active_image_index is None:
-            # TODO: raise an error or warning - no layer selected
+        if self.image_view.getImageItem() is None:
             return
+        # if self.active_image_index is None:
+        #     # TODO: raise an error or warning - no layer selected
+        #     return
         opacity_value = value / 100  # convert slider value to a range of 0.0 - 1.0
         if self.active_image_index == 0:
             self.image_view.getImageItem().setOpacity(opacity_value)
@@ -721,46 +722,6 @@ class Viewport(QWidget):
                     if self.array2D_stack[ind] is not None:
                         self.array2D_stack[ind].setLookupTable(im.lookup_table)
 
-    def _layer_selection_changed(self, index):
-        """Update the layer associated with histogram settings and interactions."""
-        self.active_image_index = index
-
-        if index == 0:
-            # set the histogram to display stats for the main image (3D MR image)
-            if self.array3D_stack[index] is not None:
-                self.is_user_histogram_interaction = False
-                main_image = self.image_view.getImageItem()
-                # TODO: set alpha slider to this image's alpha value?
-
-                self.image_view.getHistogramWidget().setImageItem(main_image)
-                # Retrieve and set the levels (brightness/contrast) for the main image
-                levels = (self.image3D_obj_stack[0].display_min, self.image3D_obj_stack[0].display_max)
-                self.image_view.getHistogramWidget().setLevels(*levels)
-                self.is_user_histogram_interaction = True
-                # TODO: retrieve and apply the LUT for the new active layer
-
-        else:
-            # use the overlay layer corresponding to the index
-            if self.array3D_stack[index] is not None:
-                overlay_slice = self.array3D_stack[index][int(self.image_view.currentIndex), :, :]
-                self.array2D_stack[index].setImage(overlay_slice, opacity=self.image3D_obj_stack[index].alpha)
-
-                self.is_user_histogram_interaction = False
-                # Connect the histogram to the selected layer
-                self.image_view.getHistogramWidget().setImageItem(self.array2D_stack[index])
-
-                # retrieve and apply the display levels (brightness/contrast) for the new active layer
-                levels = (self.image3D_obj_stack[index].display_min, self.image3D_obj_stack[index].display_max)
-                self.image_view.getHistogramWidget().setLevels(*levels)
-
-                # retrieve and apply the LUT for the new active layer
-                lut = self.image3D_obj_stack[index].lut
-                if lut is not None:
-                    self.array2D_stack[index].setLookupTable(lut)
-                self.is_user_histogram_interaction = True
-            else:
-                self.image_view.clear()  # Clear the image view if the layer is empty
-
     def _toggle_histogram(self):
         """toggle the visibility of the histogram/colormap/opacity widget"""
         histogram = self.image_view.getHistogramWidget()
@@ -792,9 +753,9 @@ class Viewport(QWidget):
                 if self.view_dir == ViewDir.AX.dir:
                     # patient right is on the left of the screen, and patient posterior at the bottom of the screen
                     if image3D_obj.x_dir == 'R':  # x-axis is inverted, so plot_x increases right to left
-                        plot_x = image3D_obj.num_cols - 1 - plot_data_col
-                    else:  # 'L'
                         plot_x = plot_data_col
+                    else:  # 'L'
+                        plot_x = image3D_obj.num_cols - 1 - plot_data_col
                     if image3D_obj.y_dir == 'A':
                         plot_y = plot_data_row
                     else:  # 'P'
@@ -810,17 +771,17 @@ class Viewport(QWidget):
                     if image3D_obj.y_dir == 'A':
                         # image3D voxel rows increase bottom to top
                         # x-axis is inverted, so plot_col increases right to left
-                        plot_x = image3D_obj.num_rows - 1 - plot_data_col
-                    else:  # 'P'
                         plot_x = plot_data_col
+                    else:  # 'P'
+                        plot_x = image3D_obj.num_rows - 1 - plot_data_col
                 elif self.view_dir == ViewDir.COR.dir:
                     # patient right is on the left of the screen, and patient inferior is at the bottom
                     if image3D_obj.x_dir == 'R':
                         # image3D columns increase right to left
                         # x-axis is inverted, so plot_col also increases right to left
-                        plot_x = image3D_obj.num_cols - 1 - plot_data_col
-                    else:  # 'L'
                         plot_x = plot_data_col
+                    else:  # 'L'
+                        plot_x = image3D_obj.num_cols - 1 - plot_data_col
                     if image3D_obj.z_dir == 'S':
                         # image3D slices increase front to back
                         # plot rows increase bottom to top
@@ -833,7 +794,16 @@ class Viewport(QWidget):
         return xy
 
     def plotxyz_to_plotdatacrs(self, plot_x, plot_y, plot_z):
+        """
+        Convert the x, y, and z (slice index) plot coordinates to the col, row, slice coordinates of the underlying
+        3D image data.
+        :param plot_x:
+        :param plot_y:
+        :param plot_z:
+        :return:
+        """
 
+        # the Image3D object that the plot data originates from. Only needed here for info about axes directions
         image3D_obj = self.image3D_obj_stack[self.background_image_index]
 
         crs = None
@@ -841,10 +811,10 @@ class Viewport(QWidget):
             if self.display_convention == 'RAS':
                 if self.view_dir == ViewDir.AX.dir:
                     # patient right is on the left of the screen, and patient posterior at the bottom of the screen
-                    if image3D_obj.x_dir == 'R':   # x-axis is inverted, so plot_x increases right to left
-                        plot_data_col = image3D_obj.num_cols - 1 - plot_x
-                    else:  # 'L'
+                    if image3D_obj.x_dir == 'R': # x-axis is inverted, so plot_x increases right to left
                         plot_data_col = plot_x
+                    else:  # 'L'
+                        plot_data_col = image3D_obj.num_cols - 1 - plot_x
                     if image3D_obj.y_dir == 'A':
                         plot_data_row = plot_y
                     else:  # 'P'
@@ -863,7 +833,7 @@ class Viewport(QWidget):
                         plot_data_row = image3D_obj.num_slices - 1 - plot_y
                     if image3D_obj.x_dir == 'R':
                         # image3D columns increase right to left
-                        # plot slice increases back to front *NOTE slicer does front to back here
+                        # plot slice increases back to front
                         plot_data_slice = plot_z
                         # voxel_slice = image3D_obj.num_cols - 1 - plot_col
                     else:  # 'A'
@@ -872,17 +842,17 @@ class Viewport(QWidget):
                     if image3D_obj.y_dir == 'A':
                         # image3D voxel rows increase bottom to top
                         # x-axis is inverted, so plot_col increases right to left
-                        plot_data_col = image3D_obj.num_rows - 1 - plot_x
-                    else:  # 'P'
                         plot_data_col =  plot_x
+                    else:  # 'P'
+                        plot_data_col = image3D_obj.num_rows - 1 - plot_x
                 elif self.view_dir == ViewDir.COR.dir:
                     # patient right is on the left of the screen, and patient inferior is at the bottom
                     if image3D_obj.x_dir == 'R':
                         # image3D columns increase right to left
                         # x-axis is inverted, so plot_col also increases right to left
-                        plot_data_col = image3D_obj.num_cols - 1 - plot_x
-                    else:  # 'L'
                         plot_data_col = plot_x
+                    else:  # 'L'
+                        plot_data_col = image3D_obj.num_cols - 1 - plot_x
                     if image3D_obj.y_dir == 'A':
                         # image3D rows increase bottom to top
                         # plot slice increases front to back
@@ -951,9 +921,9 @@ class Viewport(QWidget):
                     if image3D_obj.y_dir == 'A':
                         # image3D voxel rows increase bottom to top
                         # x-axis is inverted, so plot_col increases right to left
-                        plot_data_col = image3D_obj.num_rows - 1 - voxel_row
-                    else:  # 'P'
                         plot_data_col = voxel_row
+                    else:  # 'P'
+                        plot_data_col = image3D_obj.num_rows - 1 - voxel_row
                 elif self.view_dir == ViewDir.COR.dir:
                     # patient right is on the left of the screen, and patient inferior is at the bottom
                     if image3D_obj.x_dir == 'R':
@@ -981,9 +951,9 @@ class Viewport(QWidget):
 
     def plotdatacrs_to_imagecrs(self, plot_col, plot_row, plot_slice):
         """
-        Taking into account the current display convention (RAS, etc.), find col,row,slice (crs) coordinates of image3D
-            object from the plot data crs coordinates. Note that plot crs are in the coordinate space of the plot data,
-            which may be transposed from the original image3D to match the orientation of the viewport.
+        Taking into account the current display convention (RAS, etc.), finds col,row,slice (crs) coordinates of Image3D
+        object from the plot data crs coordinates. Note that plot crs are in the coordinate space of the plot data,
+        which may be transposed from the original Image3D to match the orientation of the viewport.
 
         :param plot_col:
         :param plot_row:
@@ -1014,23 +984,21 @@ class Viewport(QWidget):
                     if image3D_obj.z_dir == 'S':
                         # image3D slices increase front to back
                         # plot row increases bottom to top
-                        voxel_row = image3D_obj.num_cols - 1 - plot_col
+                        voxel_slice = plot_row
                     else:  # 'I'
-                        voxel_row = plot_col
+                        voxel_slice = image3D_obj.num_slices - 1 - plot_row
                     if image3D_obj.x_dir == 'R':
                         # image3D columns increase right to left
                         # plot slice increases back to front *NOTE slicer does front to back here
-                        voxel_slice = plot_row
-                        # voxel_slice = image3D_obj.num_cols - 1 - plot_col
+                        voxel_col = plot_slice
                     else:  # 'A'
-                        voxel_slice = image3D_obj.num_rows - 1 - plot_row
-                        # voxel_slice = plot_col
+                        voxel_col = image3D_obj.num_cols - 1 - plot_slice
                     if image3D_obj.y_dir == 'A':
                         # image3D voxel rows increase bottom to top
                         # x-axis is inverted, so plot_col increases right to left
-                        voxel_col = plot_slice
+                        voxel_row = plot_col
                     else:  # 'P'
-                        voxel_col = image3D_obj.num_slices - 1 - plot_slice
+                        voxel_row = image3D_obj.num_rows - 1 - plot_col
                 elif self.view_dir == ViewDir.COR.dir:
                     # patient right is on the left of the screen, and patient inferior is at the bottom
                     if image3D_obj.x_dir == 'R':
@@ -1383,6 +1351,8 @@ class Viewport(QWidget):
 
     def add_point(self, plot_x, plot_y, plot_data_col, plot_data_row, plot_data_slice, new_id=None):
         """
+        Add a point at the specified plot coordinates. The point is added to the list of points in the current slice.
+
         :param plot_data_col:
         :param plot_data_row:
         :param plot_data_slice:
@@ -1536,14 +1506,14 @@ class Viewport(QWidget):
             point['is_selected'] = True
             self.selected_point = point
             self.current_slice_index = point['plot_data_slice']
-            self.refresh()
+            self.refresh_preserve_extent()
             if notify:
                 self.point_selected_signal.emit(point, self.id, self.view_dir)
 
 
     def _scatter_mouse_press(self, event, point):
         """
-        When user presses mouse left button on a point. If the point is not already selected, select it. If the point
+        When user clicks on a point. If the point is not already selected, select it. If the point
         is already selected, allow it to be dragged to a new position.
 
         :param event:
