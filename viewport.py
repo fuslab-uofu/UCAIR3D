@@ -63,6 +63,7 @@ class Viewport(QWidget):
     # signals to notify parent class of changes in the viewport
     point_added_signal = pyqtSignal(object, object, object)
     point_selected_signal = pyqtSignal(object, object, object)
+    point_deselected_signal = pyqtSignal(object)
     point_moved_signal = pyqtSignal(object, object, object)
     slice_changed_signal = pyqtSignal(object, object)
 
@@ -274,7 +275,7 @@ class Viewport(QWidget):
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (2, 0, 1))
                 # FIXME: during testing and dev
-                print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
+                # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
                 ratio = image.dy / image.dx
             elif self.view_dir == ViewDir.COR.dir:
@@ -283,7 +284,7 @@ class Viewport(QWidget):
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (1, 0, 2))
                 # FIXME: during testing and dev
-                print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
+                # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
                 ratio = image.dz / image.dx
             else:  # "SAG"
@@ -292,7 +293,7 @@ class Viewport(QWidget):
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (0, 1, 2))
                 # FIXME: during testing and dev
-                print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
+                # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
                 ratio = image.dz / image.dy
 
@@ -382,23 +383,23 @@ class Viewport(QWidget):
     #     # first clear any (all?) selected point(s?) (assumes more than one can be selected at once?)
     #     self.clear_selected_points()
 
-    def toggle_point_selected(self, point_id, is_selected):
-        """
-        Sets the point with the specified id as selected. Deselects all other points in this viewport.
-        Since this is called by a parent class, no need to emit signal.
-
-        :param point_id:
-        :param is_selected:
-        :return:
-        """
-        if is_selected:
-            self.clear_selected_points()
-
-        point = self.find_point_by_id(point_id)
-        if point is not None:
-            point['is_selected'] = not point['is_selected']  # toggle selection
-
-        self._update_points_display()
+    # def toggle_point_selected(self, point_id, is_selected):
+    #     """
+    #     Sets the point with the specified id as selected. Deselects all other points in this viewport.
+    #     Since this is called by a parent class, no need to emit signal.
+    #
+    #     :param point_id:
+    #     :param is_selected:
+    #     :return:
+    #     """
+    #     if is_selected:
+    #         self.clear_selected_points()
+    #
+    #     point = self.find_point_by_id(point_id)
+    #     if point is not None:
+    #         point['is_selected'] = not point['is_selected']  # toggle selection
+    #
+    #     self._update_points_display()
 
     def find_point_by_id(self, point_id):
         """
@@ -413,7 +414,15 @@ class Viewport(QWidget):
                     return pt
         return None
 
-    def clear_selected_points(self):
+    def delete_point(self, point_id):
+        for slice_idx, points in self.slice_points.items():
+            for pt in points:
+                if pt['id'] == point_id:
+                    points.remove(pt)
+                    self._update_points_display()
+                    return
+
+    def clear_selected_points(self, notify=True):
         """
         Sets all points in this viewport to unselected.
 
@@ -423,6 +432,9 @@ class Viewport(QWidget):
             for pt in points:
                 pt['is_selected'] = False
         self.selected_point = None
+        self._update_points_display()
+        if notify:
+            self.point_deselected_signal.emit(self.id)
 
     def set_add_point_mode(self, _is_adding):
         """Can be called by external class to toggle add_point mode."""
@@ -1026,7 +1038,7 @@ class Viewport(QWidget):
 
     def _mouse_press(self, event):
         """
-        Capture mouse press event and handle painting point-related actions before passing the event back to pyqtgraph.
+        Capture mouse press event and handle painting and point-related actions before passing the event back to pyqtgraph.
 
         :param event:
         :return:
@@ -1039,31 +1051,30 @@ class Viewport(QWidget):
             # nothing to do
             return
 
-        if self.paint_im is not None and self.paint_im.matches_event(event):
-            self.interaction_state = 'painting'
-            self._mouse_move(event)
-        elif self.erase_im is not None and self.erase_im.matches_event(event):
-            self.interaction_state = 'erasing'
-            self._mouse_move(event)
-        elif self.point_im is not None and self.point_im.matches_event(event):
-            # for example, if the shift key is currently pressed
-            if self.add_point_mode:  # adding point
-                scene_xy = event.scenePos()
-                if img_item.sceneBoundingRect().contains(scene_xy):
-                    # transform the scene coordinates to 3D plot coordinates
-                    plot_xy = img_item.mapFromScene(scene_xy)
+        scene_xy = event.scenePos()
+        # transform the scene coordinates to 3D plot coordinates
+        plot_xy = img_item.mapFromScene(scene_xy)
+        if img_item.sceneBoundingRect().contains(scene_xy):
+            # check if the event matches any of the set interaction methods.
+            #  # for example, if the shift key is currently pressed
+            if self.paint_im is not None and self.paint_im.matches_event(event):
+                self.interaction_state = 'painting'
+                self._mouse_move(event)
+            elif self.erase_im is not None and self.erase_im.matches_event(event):
+                self.interaction_state = 'erasing'
+                self._mouse_move(event)
+            elif self.point_im is not None and self.point_im.matches_event(event):
+                if self.add_point_mode:  # adding point
                     plot_x = int(plot_xy.x())
                     plot_y = int(plot_xy.y())
                     # FIXME: during testing and dev
-                    print(f"_mouse_press plot coordinates: x: {plot_x}, y: {plot_y}")
-
+                    # print(f"_mouse_press plot coordinates: x: {plot_x}, y: {plot_y}")
                     plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
                     # FIXME: during testing and dev
-                    print(f"_mouse_press plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
-
+                    # print(f"_mouse_press plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
                     image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
                     # FIXME: during testing and dev
-                    print(f"_mouse_press image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+                    # print(f"_mouse_press image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
                     # add a point at the clicked screen position
                     new_point = self.add_point(plot_x, plot_y, plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
@@ -1075,14 +1086,18 @@ class Viewport(QWidget):
                         self._update_points_display()
                         # emit point created signal
                         self.point_added_signal.emit(new_point, self.id, self.view_dir)
+                    else:
+                        # pass the event back to pyqtgraph for any further processing
+                        self.original_mouse_press(event)
                 else:
+                    if len(self.scatter.pointsAt(plot_xy)) == 0:
+                        # clicked in the plot, but not on a point. Deselect any selected points
+                        self.clear_selected_points()
+
                     # pass the event back to pyqtgraph for any further processing
                     self.original_mouse_press(event)
             else:
-                # pass the event back to pyqtgraph for any further processing
-                self.original_mouse_press(event)
-        else:
-            self.interaction_state = None  # No interaction matches
+                self.interaction_state = None  # No interaction matches
 
             # pass the event back to pyqtgraph for any further processing
             self.original_mouse_press(event)
@@ -1123,7 +1138,7 @@ class Viewport(QWidget):
             plot_y = int(plot_mouse_point.y())
 
             # FIXME: during testing and dev
-            print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
+            # print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
 
             # get the voxel indices of the cursor in the 3D image data
             # NOTE: PyQtGraph expects the first dimension of the 3D array to represent time or frames in a sequence,
@@ -1134,12 +1149,12 @@ class Viewport(QWidget):
             plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
 
             # FIXME: during testing and dev
-            print(f"Plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
+            # print(f"Plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
 
             image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
 
             # FIXME: during testing and dev
-            print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+            # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
             # get the value of all voxels at this position
             # voxel_values = [data_array[plot_data_crs[0], plot_data_crs[1], plot_data_crs[2]]]
@@ -1170,8 +1185,8 @@ class Viewport(QWidget):
                 # dragging point
                 self.point_moved = True
                 # FIXME: during testing and dev
-                print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
-                print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
+                # print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
+                # print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
                 self.selected_point['plot_x'] = plot_x  # voxel index into the 3D array
                 self.selected_point['plot_y'] = plot_y  # voxel index into the 3D array
                 self.selected_point['plot_data_col']: plot_data_crs[0]# voxel index into the 3D plot data
@@ -1183,6 +1198,8 @@ class Viewport(QWidget):
 
                 # update the ScatterPlotItem to reflect the new position
                 self._update_points_display()
+                # FIXME: during testing and dev
+                # print(self.selected_point)
                 self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
             else:
                 # probably panning - pass the event back to pyqtgraph for any further processing
@@ -1198,7 +1215,7 @@ class Viewport(QWidget):
         Disable painting, erasing, and dragging point actions and pass the event back to pyqtgraph.
         """
         # FIXME: during testing and dev
-        print("_mouse_release")
+        # print("_mouse_release")
 
         self.interaction_state = None
         self.drag_point_mode = False
@@ -1370,17 +1387,17 @@ class Viewport(QWidget):
         img_shape = array3D.shape  # shape of the 3D array, transposed from Image3D object
 
         # FIXME: during testing and dev
-        print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
+        # print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
 
         # FIXME: during testing and dev
-        print(f"Plot data coordinates: col: {plot_data_col}, row: {plot_data_row}, slice: {plot_data_slice}")
+        # print(f"Plot data coordinates: col: {plot_data_col}, row: {plot_data_row}, slice: {plot_data_slice}")
 
         if (0 <= plot_data_col < img_shape[1] and 0 <= plot_data_row < img_shape[2] and
                 0 <= plot_data_slice < img_shape[0]):
             image_crs = self.plotdatacrs_to_imagecrs(plot_data_col, plot_data_row, plot_data_slice)
 
             # FIXME: during testing and dev
-            print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+            # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
             # if coordinates are within image bounds
             if plot_data_slice not in self.slice_points:
@@ -1510,6 +1527,24 @@ class Viewport(QWidget):
             if notify:
                 self.point_selected_signal.emit(point, self.id, self.view_dir)
 
+    def deselect_point(self, point, notify):
+        """
+        Set specified point as  not selected. Update the display of points. Optionally notify the parent class.
+
+        :param point: dict (point data)
+        :param notify: bool (whether to notify the parent class)
+        :return:
+        """
+        if point is not None:
+            if self.selected_point is not None:
+                # deselect previously selected point
+                self.selected_point['is_selected'] = False
+            point['is_selected'] = True
+            self.selected_point = point
+            self.current_slice_index = point['plot_data_slice']
+            self.refresh_preserve_extent()
+            if notify:
+                self.point_deselected_signal.emit(point, self.id, self.view_dir)
 
     def _scatter_mouse_press(self, event, point):
         """
@@ -1530,7 +1565,7 @@ class Viewport(QWidget):
                     self.drag_point_mode = True
 
                 # FIXME: during testing and dev
-                print(f"_scatter_mouse_press: {point}")
+                # print(f"_scatter_mouse_press: {point}")
 
         # if point is not already selected, select it and set dragging mode to true
 
