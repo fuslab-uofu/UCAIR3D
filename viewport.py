@@ -63,7 +63,7 @@ class Viewport(QWidget):
     # signals to notify parent class of changes in the viewport
     point_added_signal = pyqtSignal(object, object, object)
     point_selected_signal = pyqtSignal(object, object, object)
-    point_deselected_signal = pyqtSignal(object)
+    points_cleared_signal = pyqtSignal(object)
     point_moved_signal = pyqtSignal(object, object, object)
     slice_changed_signal = pyqtSignal(object, object)
 
@@ -434,10 +434,10 @@ class Viewport(QWidget):
         self.selected_point = None
         self._update_points_display()
         if notify:
-            self.point_deselected_signal.emit(self.id)
+            self.points_cleared_signal.emit(self.id)
 
     def set_add_point_mode(self, _is_adding):
-        """Can be called by external class to toggle add_point mode."""
+        """Can be called by external class to toggle add_scatter_point mode."""
         self.add_point_mode = _is_adding
 
     def set_pending_point_mode(self, _pending):
@@ -453,7 +453,7 @@ class Viewport(QWidget):
         """called by external class to import points from a list of (x, y, z) coordinates."""
         pass
         # for x, y, z in points:
-        #     self.add_point(x, y, z)
+        #     self.add_scatter_point(x, y, z)
 
     # painting ---------------------------------------------------------------------------------------------------------
     # def toggle_painting_mode(self, which_layer, _is_painting):
@@ -753,9 +753,9 @@ class Viewport(QWidget):
         Convert plot data coordinates to plot x and y coordinates. This method is used to convert the plot data
         coordinates to the plot x and y coordinates that are used by the scatter plot item.
 
-        :param plot_data_col:
-        :param plot_data_row:
-        :return: plot_x, plot_y
+        :param plot_data_col: int
+        :param plot_data_row: int
+        :return: plot_x, plot_y [int, int]
         """
         image3D_obj = self.image3D_obj_stack[self.background_image_index]
 
@@ -891,7 +891,7 @@ class Viewport(QWidget):
         :param voxel_col:
         :param voxel_row:
         :param voxel_slice:
-        :return: crs np.array([plot_col, plot_row, plot_slice])
+        :return: crs np.array([plot_data_col, plot_data_row, plot_data_slice])
         """
         # return self.plotdatacrs_to_imagecrs(voxel_col, voxel_row, voxel_slice)  # a trick
 
@@ -961,15 +961,15 @@ class Viewport(QWidget):
 
         return crs
 
-    def plotdatacrs_to_imagecrs(self, plot_col, plot_row, plot_slice):
+    def plotdatacrs_to_imagecrs(self, plot_data_col, plot_data_row, plot_data_slice):
         """
         Taking into account the current display convention (RAS, etc.), finds col,row,slice (crs) coordinates of Image3D
         object from the plot data crs coordinates. Note that plot crs are in the coordinate space of the plot data,
         which may be transposed from the original Image3D to match the orientation of the viewport.
 
-        :param plot_col:
-        :param plot_row:
-        :param plot_slice:
+        :param plot_data_col:
+        :param plot_data_row:
+        :param plot_data_slice:
         :return: crs: np.array([voxel_col, voxel_row, voxel_slice])
         """
         image3D_obj = self.image3D_obj_stack[self.background_image_index]
@@ -980,57 +980,57 @@ class Viewport(QWidget):
                 if self.view_dir == ViewDir.AX.dir:
                     # patient right is on the left of the screen, and patient posterior at the bottom of the screen
                     if image3D_obj.x_dir == 'R':  # voxel columns increase right to left
-                        voxel_col = plot_col # x-axis is inverted, so plot_x also increases right to left
+                        voxel_col = plot_data_col # x-axis is inverted, so plot_x also increases right to left
                     else:  # 'L'
-                        voxel_col = image3D_obj.num_cols - 1 - plot_col
+                        voxel_col = image3D_obj.num_cols - 1 - plot_data_col
                     if image3D_obj.y_dir == 'A':
-                        voxel_row = plot_row
+                        voxel_row = plot_data_row
                     else:  # 'P'
-                        voxel_row = self.num_rows - 1 - plot_row
+                        voxel_row = self.num_rows - 1 - plot_data_row
                     if image3D_obj.z_dir == 'S':
-                        voxel_slice = plot_slice
+                        voxel_slice = plot_data_slice
                     else:  # 'I'
-                        voxel_slice = image3D_obj.num_slices - 1 - plot_slice
+                        voxel_slice = image3D_obj.num_slices - 1 - plot_data_slice
                 elif self.view_dir == ViewDir.SAG.dir:
                     # patient anterior is on the left of the screen, and patient inferior is at the bottom
                     if image3D_obj.z_dir == 'S':
                         # image3D slices increase front to back
                         # plot row increases bottom to top
-                        voxel_slice = plot_row
+                        voxel_slice = plot_data_row
                     else:  # 'I'
-                        voxel_slice = image3D_obj.num_slices - 1 - plot_row
+                        voxel_slice = image3D_obj.num_slices - 1 - plot_data_row
                     if image3D_obj.x_dir == 'R':
                         # image3D columns increase right to left
                         # plot slice increases back to front *NOTE slicer does front to back here
-                        voxel_col = plot_slice
+                        voxel_col = plot_data_slice
                     else:  # 'A'
-                        voxel_col = image3D_obj.num_cols - 1 - plot_slice
+                        voxel_col = image3D_obj.num_cols - 1 - plot_data_slice
                     if image3D_obj.y_dir == 'A':
                         # image3D voxel rows increase bottom to top
-                        # x-axis is inverted, so plot_col increases right to left
-                        voxel_row = plot_col
+                        # x-axis is inverted, so plot_data_col increases right to left
+                        voxel_row = plot_data_col
                     else:  # 'P'
-                        voxel_row = image3D_obj.num_rows - 1 - plot_col
+                        voxel_row = image3D_obj.num_rows - 1 - plot_data_col
                 elif self.view_dir == ViewDir.COR.dir:
                     # patient right is on the left of the screen, and patient inferior is at the bottom
                     if image3D_obj.x_dir == 'R':
                         # image3D columns increase right to left
-                        # x-axis is inverted, so plot_col also increases right to left
-                        voxel_col = plot_col
+                        # x-axis is inverted, so plot_data_col also increases right to left
+                        voxel_col = plot_data_col
                     else:  # 'L'
-                        voxel_col = image3D_obj.num_cols - 1 - plot_col
+                        voxel_col = image3D_obj.num_cols - 1 - plot_data_col
                     if image3D_obj.y_dir == 'A':
                         # image3D rows increase bottom to top
                         # plot slice increases front to back
-                        voxel_slice = plot_row
+                        voxel_slice = plot_data_row
                     else:  # 'P'
-                        voxel_slice = image3D_obj.num_rows - 1 - plot_row
+                        voxel_slice = image3D_obj.num_rows - 1 - plot_data_row
                     if image3D_obj.z_dir == 'S':
                         # image3D slices increase front to back
                         # plot rows increase bottom to top
-                        voxel_row = plot_slice
+                        voxel_row = plot_data_slice
                     else:  # 'I'
-                        voxel_row = image3D_obj.num_slices - 1 - plot_slice
+                        voxel_row = image3D_obj.num_slices - 1 - plot_data_slice
 
                 crs = np.array([voxel_col, voxel_row, voxel_slice])
 
@@ -1077,7 +1077,7 @@ class Viewport(QWidget):
                     # print(f"_mouse_press image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
                     # add a point at the clicked screen position
-                    new_point = self.add_point(plot_x, plot_y, plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
+                    new_point = self.add_scatter_point(plot_x, plot_y, image_crs[0], image_crs[1], image_crs[2])
                     if new_point is not None:
                         # set this new point as the selected point
                         self.select_point(new_point, False)
@@ -1156,18 +1156,6 @@ class Viewport(QWidget):
             # FIXME: during testing and dev
             # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
-            # get the value of all voxels at this position
-            # voxel_values = [data_array[plot_data_crs[0], plot_data_crs[1], plot_data_crs[2]]]
-            # TODO
-            # data_arrays = [arr for arr in self.array3D_stack if arr is not None]
-            # if len(data_arrays) > 1:
-            #     for i in range(1, len(data_arrays)):
-            #         voxel_values.append(data_arrays[i][plot_x, plot_y, self.current_slice_index])
-
-            # FIXME: during testing and dev
-            # if self.is_painting and self.imageItem2D_canvas.image is not None:
-            # print(f"canvas: {self.imageItem2D_canvas.image[x, y]}")
-
             # update the coordinates label
             coordinates_text = "col:{:3d}, row:{:3d}, slice:{:3d}".format(image_crs[0], image_crs[1], image_crs[2])
             # append voxel values for each image
@@ -1187,14 +1175,11 @@ class Viewport(QWidget):
                 # FIXME: during testing and dev
                 # print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
                 # print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
-                self.selected_point['plot_x'] = plot_x  # voxel index into the 3D array
-                self.selected_point['plot_y'] = plot_y  # voxel index into the 3D array
-                self.selected_point['plot_data_col']: plot_data_crs[0]# voxel index into the 3D plot data
-                self.selected_point['plot_data_row']: plot_data_crs[1]# voxel index into the 3D plot data
-                self.selected_point['plot_data_slice']: plot_data_crs[2]# voxel index into the 3D plot data
-                self.selected_point['image_col'] = image_crs[0]  # voxel index into the 3D array
-                self.selected_point['image_row'] = image_crs[1]
-                self.selected_point['image_slice'] = image_crs[2]
+                self.selected_point['plot_x'] = plot_x
+                self.selected_point['plot_y'] = plot_y
+                self.selected_point['image_col'] = image_crs[0]  # voxel index into the Image3D object
+                self.selected_point['image_row'] = image_crs[1]  # voxel index into the Image3D object
+                self.selected_point['image_slice'] = image_crs[2]  # voxel index into the Image3D object
 
                 # update the ScatterPlotItem to reflect the new position
                 self._update_points_display()
@@ -1366,15 +1351,15 @@ class Viewport(QWidget):
         # # reconnect the slot
         # self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
-    def add_point(self, plot_x, plot_y, plot_data_col, plot_data_row, plot_data_slice, new_id=None):
+    def add_scatter_point(self, plot_x, plot_y, image_col, image_row, image_slice, new_id=None):
         """
-        Add a point at the specified plot coordinates. The point is added to the list of points in the current slice.
+        Add a point at the specified plot coordinates. The point is added to the list of points for the current slice.
 
-        :param plot_data_col:
-        :param plot_data_row:
-        :param plot_data_slice:
+        :param image_col: int
+        :param image_row: int
+        :param image_slice: int
         :param new_id: str (optional, unique id for the new point, for same point id in multiple viewports [landmarks])
-        :return: new_point
+        :return: new_point: dict (point data)
         """
         new_point = None
 
@@ -1385,23 +1370,18 @@ class Viewport(QWidget):
 
         # shape is in the form (slices, cols, rows)
         img_shape = array3D.shape  # shape of the 3D array, transposed from Image3D object
-
-        # FIXME: during testing and dev
-        # print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
-
-        # FIXME: during testing and dev
-        # print(f"Plot data coordinates: col: {plot_data_col}, row: {plot_data_row}, slice: {plot_data_slice}")
-
-        if (0 <= plot_data_col < img_shape[1] and 0 <= plot_data_row < img_shape[2] and
-                0 <= plot_data_slice < img_shape[0]):
-            image_crs = self.plotdatacrs_to_imagecrs(plot_data_col, plot_data_row, plot_data_slice)
+        # coordinates into the 3D array used for plotting. This 3D array is transposed from the image3D object data
+        # in the sagittal and coronal cases.
+        plot_data_crs = self.imagecrs_to_plotdatacrs(image_col, image_row, image_slice)
+        if (0 <= plot_data_crs[0] < img_shape[1] and 0 <= plot_data_crs[1] < img_shape[2] and
+                0 <= plot_data_crs[2] < img_shape[0]):
 
             # FIXME: during testing and dev
             # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
-            # if coordinates are within image bounds
-            if plot_data_slice not in self.slice_points:
-                self.slice_points[plot_data_slice] = []
+            # do we have any points on this slice yet?
+            if plot_data_crs[2] not in self.slice_points:  # slice_points organized by slice index of the 3D plot data
+                self.slice_points[plot_data_crs[2]] = []
             if new_id is not None:
                 # use the provided id
                 point_id = new_id
@@ -1413,72 +1393,15 @@ class Viewport(QWidget):
             new_point = {
                 'plot_x': plot_x,
                 'plot_y': plot_y,
-                'plot_data_col': plot_data_col,      # voxel index into the 3D plot data
-                'plot_data_row': plot_data_row,      # voxel index into the 3D plot data
-                'plot_data_slice': plot_data_slice,  # voxel index into the 3D plot data
                 'id': point_id,
-                'image_col': image_crs[0],      # voxel index into the image3D object data
-                'image_row': image_crs[1],      # voxel index into the image3D object data
-                'image_slice': image_crs[2],    # voxel index into the image3D object data
-                'is_selected': False  # might not be necessary if only one point can be selected at a time
+                'image_col': image_col,      # voxel index into the image3D object data
+                'image_row': image_row,      # voxel index into the image3D object data
+                'image_slice': image_slice,    # voxel index into the image3D object data
+                'is_selected': False  # FIXME: might not be necessary if only one point can be selected at a time
             }
-            self.slice_points[plot_data_slice].append(new_point)
-
-        # # update points display
-        # self._update_points_display()
-        # else:  # TODO: handle other display conventions
-        #     pass
+            self.slice_points[plot_data_crs[2]].append(new_point)
 
         return new_point
-
-    # def _add_point_at(self, _im_idx: int, x: int, y: int, z: int):
-    #     """
-    #     :param _im_idx: uint (index of the image in the stack)
-    #     :param x: uint (column index)
-    #     :param y: uint (row index)
-    #     :param z: uint (slice index)
-    #     :return: new point item
-    #     Add a custom scatterplot item (point) at the specified (x, y) coordinates. z (slice index) is optional.
-    #     Add point to list of points in this viewport, and connect a point press event to the point.
-    #     """
-    #
-    #     # validate that x, y, and z are non-negative
-    #     if x < 0 or y < 0 or (z is not None and z < 0):
-    #         raise ValueError("x, y, and z (if provided) must be non-negative integers.")
-    #
-    #     # # create a scatter plot item as a point
-    #     # custom_point = CustomScatterPlotItem(im_idx=_im_idx, sl_idx=z, col_idx=x, row_idx=y)
-    #
-    #     # add point to the current slice
-    #     if z not in self.slice_points:
-    #         self.slice_points[z] = []
-    #     self.slice_points[z].append((x, y))
-    #
-    #     # update points display
-    #     self._update_points_display()
-    #
-    #     # # Temporarily disconnect the signal before adding points
-    #     # try:
-    #     #     custom_point.sigPressed.disconnect(self._point_pressed)
-    #     # except TypeError:
-    #     #     pass  # Signal was not connected
-    #     #
-    #     # # customize size and color. CAUTION: this will trigger the mouse_pressed event of custom_point
-    #     # custom_point.addPoints([{'pos': (x, y), 'brush': self.temp_brush, 'size': 10}])
-    #     #
-    #     # # add point to the view
-    #     # self.image_view.addItem(custom_point)
-    #     #
-    #     # # store point for future reference (e.g., clearing points)
-    #     # self.points.append(custom_point)
-    #     #
-    #     # # connect the point press event to the point
-    #     # custom_point.sigPressed.connect(self._point_pressed)
-    #
-    #     # FIXME: during testing and dev
-    #     print(f"Point added at: x={x}, y={y}, z={z}")
-    #
-    #     # return custom_point
 
     def _update_points_display(self):
         """
@@ -1522,29 +1445,32 @@ class Viewport(QWidget):
                 self.selected_point['is_selected'] = False
             point['is_selected'] = True
             self.selected_point = point
-            self.current_slice_index = point['plot_data_slice']
+            plot_data_crs = self.imagecrs_to_plotdatacrs(point['image_col'], point['image_row'], point['image_slice'])
+            self.current_slice_index = plot_data_crs[2]
+            self.goto_slice(plot_data_crs[2])
             self.refresh_preserve_extent()
             if notify:
                 self.point_selected_signal.emit(point, self.id, self.view_dir)
 
-    def deselect_point(self, point, notify):
-        """
-        Set specified point as  not selected. Update the display of points. Optionally notify the parent class.
-
-        :param point: dict (point data)
-        :param notify: bool (whether to notify the parent class)
-        :return:
-        """
-        if point is not None:
-            if self.selected_point is not None:
-                # deselect previously selected point
-                self.selected_point['is_selected'] = False
-            point['is_selected'] = True
-            self.selected_point = point
-            self.current_slice_index = point['plot_data_slice']
-            self.refresh_preserve_extent()
-            if notify:
-                self.point_deselected_signal.emit(point, self.id, self.view_dir)
+    # def deselect_point(self, point, notify):
+    #     """
+    #     Set specified point as  not selected. Update the display of points. Optionally notify the parent class.
+    #
+    #     :param point: dict (point data)
+    #     :param notify: bool (whether to notify the parent class)
+    #     :return:
+    #     """
+    #     if point is not None:
+    #         if self.selected_point is not None:
+    #             # deselect previously selected point
+    #             self.selected_point['is_selected'] = False
+    #         point['is_selected'] = True
+    #         self.selected_point = point
+    #         plot_data_crs = self.imagecrs_to_plotdatacrs(point['image_col'], point['image_row'], point['image_slice'])
+    #         self.current_slice_index = plot_data_crs[2]
+    #         self.refresh_preserve_extent()
+    #         if notify:
+    #             self.point_deselected_signal.emit(point, self.id, self.view_dir)
 
     def _scatter_mouse_press(self, event, point):
         """
