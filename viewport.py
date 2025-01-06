@@ -19,7 +19,7 @@ class CustomScatterPlotItem(pg.ScatterPlotItem):
         super().__init__(*args, **kwargs)
         self.mouse_press_callback = None
         self.mouse_release_callback = None
-        # self.current_point = None  # Track the currently selected point
+        # self.current_point = None  # Track the currently selected marker
 
     def set_mouse_press_callback(self, callback):
         self.mouse_press_callback = callback
@@ -55,7 +55,7 @@ class CustomScatterPlotItem(pg.ScatterPlotItem):
 class Viewport(QWidget):
     """ This class displays one or more 3D images. It is interactive and allows the user to pan, zoom, and scroll
     through images. Multiple images can be stacked on top of each other to create overlays. The user can also paint
-    (modify the voxel values) and add points to the image. Tools are provided for modifying the colormap and opacity
+    (modify the voxel values) and add markers to the image. Tools are provided for modifying the colormap and opacity
     of the images. The calling class must provide the view desired view direction (axial, coronal, sagittal).
     The calling class must also provide the maximum number of image allowed in the stack.
     A viewport is a subclass of QWidget and can be added to a layout in a QMainWindow.
@@ -110,7 +110,7 @@ class Viewport(QWidget):
         self.temp_pen = pg.mkPen(self.temp_point_color, width=1)  # yellow pen for temporary point
         self.temp_brush = pg.mkBrush(self.temp_point_color)
         # dictionary to store points for each slice
-        self.slice_points = {}
+        self.slice_markers = {}
 
         # convenience reference to the background image item
         self.background_image_index = None
@@ -374,79 +374,128 @@ class Viewport(QWidget):
     def get_current_slice_index(self):
         return self.image_view.currentIndex
 
-    # points -----------------------------------------------------------------------------------------------------------
+    # markers ----------------------------------------------------------------------------------------------------------
+    def add_marker(self, image_col, image_row, image_slice, image_index, new_id=None):
+        """
+        Add a marker at the specified plot coordinates. The marker is added to the list of markers for the current
+        slice, but is not plotted until _update_markers_display() is called.
 
-    # def set_point_selected(self, point):
-    #     """
-    #     Sets the specified point as selected. Deselects all other points in this viewport.
-    #
-    #     :param point:
-    #     :return:
-    #     """
-    #     # first clear any (all?) selected point(s?) (assumes more than one can be selected at once?)
-    #     self.clear_selected_points()
+        :param image_col: int
+        :param image_row: int
+        :param image_slice: int
+        :param image_index: int (index of the image in the stack)
+        :param new_id: str (optional, unique id for the new marker, for same marker id in multiple viewports [landmarks])
+        :return: new_marker: dict (marker data)
+        """
+        new_marker = None
 
-    # def toggle_point_selected(self, point_id, is_selected):
-    #     """
-    #     Sets the point with the specified id as selected. Deselects all other points in this viewport.
-    #     Since this is called by a parent class, no need to emit signal.
-    #
-    #     :param point_id:
-    #     :param is_selected:
-    #     :return:
-    #     """
-    #     if is_selected:
-    #         self.clear_selected_points()
-    #
-    #     point = self.find_point_by_id(point_id)
-    #     if point is not None:
-    #         point['is_selected'] = not point['is_selected']  # toggle selection
-    #
-    #     self._update_points_display()
+        # FIXME: use the image specified by point_layer_index, not necessarily the background_image_index?
+        # img_item = self.image_view.getImageItem()  # the image item of the ImageView widget
+        array3D = self.array3D_stack[image_index]  # 3D array of data, optionally transposed
+        # image3D_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
 
-    def find_point_by_id(self, point_id):
+        # shape is in the form (slices, cols, rows)
+        plot_data_shape = array3D.shape  # shape of the 3D array, transposed from Image3D object
+        # coordinates of marker in the 3D array used for plotting. This 3D array is transposed from the image3D object
+        # data in the sagittal and coronal cases.
+        plot_data_crs = self.imagecrs_to_plotdatacrs(image_col, image_row, image_slice)
+        if (0 <= plot_data_crs[0] < plot_data_shape[1] and 0 <= plot_data_crs[1] < plot_data_shape[2] and
+            0 <= plot_data_crs[2] < plot_data_shape[0]):
+
+            # FIXME: during testing and dev
+            # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+
+            # do we have any markers on this slice yet?
+            if plot_data_crs[2] not in self.slice_markers:  # slice_markers organized by slice index of the 3D plot data
+                self.slice_markers[plot_data_crs[2]] = []
+            if new_id is not None:
+                # use the provided id
+                marker_id = new_id
+            else:
+                # create a unique id for the new  marker
+                marker_id = shortuuid.ShortUUID().random(length=8)  # short, unique, and (marginally) human-readable
+                # FIXME: check to see if this id is already in use (is that possible?)
+            # add the marker with additional metadata
+            new_marker = {
+                'id': marker_id,
+                'image_col': image_col,      # voxel index in the Image3D object data
+                'image_row': image_row,      # voxel index in the Image3D object data
+                'image_slice': image_slice,  # voxel index in the Image3D object data
+                'is_selected': False  # FIXME: might not be necessary if only one marker can be selected at a time?
+            }
+            self.slice_markers[plot_data_crs[2]].append(new_marker)
+
+        return new_marker
+
+    def select_marker(self, point, notify):
+        """
+        Set specified point as selected. Deselect any other point that was previously selected. Update the
+        display of points. Optionally notify the parent class.
+
+        :param point: dict (point data)
+        :param notify: bool (whether to notify the parent class)
+        :return:
+        """
+        if point is not None:
+            if self.selected_point is not None:
+                # deselect previously selected point
+                self.selected_point['is_selected'] = False
+            point['is_selected'] = True
+            self.selected_point = point
+            plot_data_crs = self.imagecrs_to_plotdatacrs(point['image_col'], point['image_row'], point['image_slice'])
+            self.current_slice_index = plot_data_crs[2]
+            self.goto_slice(plot_data_crs[2])
+            self.refresh_preserve_extent()
+            if notify:
+                self.point_selected_signal.emit(point, self.id, self.view_dir)
+
+    def find_marker_by_id(self, point_id):
         """
         Find the point with the specified ID across all slices.
 
         :param point_id: str (unique ID of the point)
         :return: tuple (slice_index, point_data) if found, otherwise None
         """
-        for slice_idx, points in self.slice_points.items():
+        for slice_idx, points in self.slice_markers.items():
             for pt in points:
                 if pt['id'] == point_id:
                     return pt
         return None
 
-    def delete_point(self, point_id):
-        for slice_idx, points in self.slice_points.items():
-            for pt in points:
-                if pt['id'] == point_id:
-                    points.remove(pt)
-                    self._update_points_display()
+    def delete_marker(self, marker_id):
+        for slice_idx, slice_markers in self.slice_markers.items():
+            for mk in slice_markers:
+                if mk['id'] == marker_id:
+                    slice_markers.remove(mk)
+                    self._update_markers_display()
                     return
 
-    def clear_selected_points(self, notify=True):
+    def delete_all_markers(self):
+        self.slice_markers = {}
+        self._update_markers_display()
+
+    def clear_selected_markers(self, notify=True):
         """
         Sets all points in this viewport to unselected.
 
         :return:
         """
-        for slice_idx, points in self.slice_points.items():
+        for slice_idx, points in self.slice_markers.items():
             for pt in points:
                 pt['is_selected'] = False
         self.selected_point = None
-        self._update_points_display()
+        self._update_markers_display()
         if notify:
             self.points_cleared_signal.emit(self.id)
 
-    def set_add_point_mode(self, _is_adding):
-        """Can be called by external class to toggle add_scatter_point mode."""
+    def set_add_marker_mode(self, _is_adding):
+        """Can be called by external class to toggle add_marker mode."""
         self.add_point_mode = _is_adding
 
-    def set_pending_point_mode(self, _pending):
+    def set_pending_marker_mode(self, _pending):
         self.pending_point_mode = _pending
 
-    def clear_points(self):
+    def clear_markers(self):
         """Remove all points from the image view."""
         for point in self.points:
             self.image_view.removeItem(point)
@@ -455,8 +504,6 @@ class Viewport(QWidget):
     def import_points(self, points):
         """called by external class to import points from a list of (x, y, z) coordinates."""
         pass
-        # for x, y, z in points:
-        #     self.add_scatter_point(x, y, z)
 
     # painting ---------------------------------------------------------------------------------------------------------
     # def toggle_painting_mode(self, which_layer, _is_painting):
@@ -488,167 +535,6 @@ class Viewport(QWidget):
         #     return
         # if self.is_painting:
         #     self._update_canvas()
-
-    def set_canvas_layer(self, index):
-        """Set the canvas layer for painting."""
-        self.canvas_layer_index = index
-
-    def refresh_preserve_extent(self):
-        """
-        Refresh the viewport without changing the current view extent.
-        """
-        # save the current view state (extent)
-        view_box = self.image_view.getView()
-        current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
-
-        self.refresh()
-
-        # restore the view range
-        view_box.setRange(
-            xRange=current_range[0],
-            yRange=current_range[1],
-            padding=0  # Disable padding to restore exact range
-        )
-
-    def refresh(self):
-        """
-        Should be called when one of the images displayed in the viewport changes. Sets the image item, and connects the
-        histogram widget to the image item. Also updates the overlay images.
-        """
-
-        self.image_view.clear()
-
-        # the image stack may have empty slots, so we need to find the first non-empty image to display
-        found_bottom_image = False
-        self.background_image_index = None
-
-        for ind, im_obj in enumerate(self.image3D_obj_stack):
-            if im_obj is None:
-                continue
-            else:
-                if not found_bottom_image:
-                    # this is the bottom image in the stack and will be set as the 3D background image item in the
-                    # image view
-                    im_data = self.array3D_stack[ind]  # the (optionally transposed) 3D array
-                    # self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
-                    # setImage causes the z-slider slot to be called, which resets the current slice index to 0
-                    # disconnect slot to prevent this from happening
-                    try:
-                        # disconnect the slot before making changes
-                        self.image_view.timeLine.sigPositionChanged.disconnect(self._slice_changed)
-                    except TypeError:
-                        # if the slot was not connected, ignore the error
-                        pass
-                    self.image_view.setImage(im_data)
-                    # FIXME: set aspect ratio based on base image? What about overlay?
-                    if self.view_dir == ViewDir.AX.dir:
-                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dx / im_obj.dy)
-                    elif self.view_dir == ViewDir.COR.dir:
-                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dx / im_obj.dz)
-                    else:  # "SAG"
-                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dy / im_obj.dz)
-
-                    self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
-
-                    # FIXME: testing
-                    # self.scatter_items = [pg.ScatterPlotItem() for _ in range(im_data.shape[0])]
-                    # for scatter in self.scatter_items:
-                    #     self.image_view.getView().addItem(scatter)
-
-                    main_image = self.image_view.getImageItem()
-                    # Set the levels to prevent LUT rescaling based on the slice content
-                    main_image.setLevels([im_obj.display_min, im_obj.display_max])
-                    # apply the opacity of the Image3D object to the ImageItem
-                    main_image.setOpacity(im_obj.alpha)
-                    main_image.setLookupTable(im_obj.lookup_table)
-
-                    # FIXME: correct? # radiological convention = RAS+ notation
-                    #  (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
-                    #  at the bottom of the screen?)
-                    self.image_view.getImageItem().getViewBox().invertY(False)
-                    if im_obj.x_dir == 'R':
-                        # x increases from screen right to left if RAS+ notation (and patient is HFS?)
-                        self.image_view.getImageItem().getViewBox().invertX(True)
-
-                    # self.is_user_histogram_interaction = True
-                    self.background_image_index = ind
-                    found_bottom_image = True
-                else:
-                    # this is an overlay image, so we need to get a slice of it and set it as an overlay
-                    self._update_overlay_slice(ind)  # uses self.current_slice_index
-
-                # set the current slice index to the first slice of the background image
-                try:
-                    # disconnect the slot before making changes
-                    self.image_view.timeLine.sigPositionChanged.disconnect(self._slice_changed)
-                except TypeError:
-                    # if the slot was not connected, ignore the error
-                    pass
-                self.image_view.setCurrentIndex(self.current_slice_index)
-                self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
-
-        # update the crosshairs
-        if self.background_image_index is None:
-            # no image to display, so hide slice guides, even if visibility is set to True
-            self.horizontal_line.setVisible(False)
-            self.vertical_line.setVisible(False)
-        else:
-            self.horizontal_line.setVisible(self.show_slice_guides)
-            self.vertical_line.setVisible(self.show_slice_guides)
-            if self.show_slice_guides:
-                self.horizontal_line.setPos(self.horizontal_line_idx)
-                self.vertical_line.setPos(self.vertical_line_idx)
-
-        self._update_points_display()
-
-        self.image_view.show()
-
-    #  -----------------------------------------------------------------------------------------------------------------
-    #  "Private" methods -----------------------------------------------------------------------------------------------
-    #  -----------------------------------------------------------------------------------------------------------------
-
-
-
-    def _slice_changed(self):
-        """
-        Simply update self.current_slice_index from the imageView's current slice. Called when the z-slicer has changed.
-        :return:
-        """
-        self.current_slice_index = self.image_view.currentIndex
-
-        self.refresh_preserve_extent()
-
-        self.slice_changed_signal.emit(self.id, self.current_slice_index)
-
-    def _update_overlays(self):
-        """
-        When the slice index has changed, manually update the overlay image(s) with the corresponding slice from
-        the array3D.
-
-        :return:
-        """
-        if self.background_image_index == self.num_vols_allowed - 1:
-            # the bottom image is at the top of the stack - there are no overlay images
-            return
-
-        # loop through images in the stack above the background image
-        for layer_index in range(self.background_image_index + 1, self.num_vols_allowed):
-            if self.image3D_obj_stack[layer_index] is not None:
-                self._update_overlay_slice(layer_index)
-            else:
-                if self.array2D_stack[layer_index] is not None:
-                    self.array2D_stack[layer_index].clear()
-
-        self._update_points_display()
-
-        # update coordinates to reflect the current slice (so it updates without needing to move the mouse)
-        coordinates_text = self.coordinates_label.text()
-        if len(coordinates_text) > 0:
-            pattern = r"x=\s*\d+,\s*y=\s*\d+,\s*z=\s*(\d+)"
-            new_z = self.image_view.currentIndex
-            # substitute the new z value
-            new_string = re.sub(pattern, lambda m: m.group(0).replace(m.group(1), f"{new_z:3d}"), coordinates_text)
-            self.coordinates_label.setText(new_string)
 
     def blend_background_with_layer(self, bg_pct, layer_idx, layer_pct):
         """
@@ -693,80 +579,9 @@ class Viewport(QWidget):
         # self.image_view.show()
         # self.refresh_preserve_extent()
 
-    def _update_overlay_slice(self, layer_index):
-        """Update the overlay image with the current slice from the array3D."""
-        if self.array3D_stack[layer_index] is not None:
-            overlay_image_object = self.image3D_obj_stack[layer_index]
-            overlay_data = self.array3D_stack[layer_index]
-            overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
-            overlay_image_item = self.array2D_stack[layer_index]
-            # apply the slice to the overlay ImageItem
-            # self.is_user_histogram_interaction = False
-            overlay_image_item.setImage(overlay_slice)
-            # Set the levels to prevent LUT rescaling based on the slice content
-            overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
-            overlay_image_item.setOpacity(overlay_image_object.alpha)
-            overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
-
-    def _update_opacity(self, value):
-        """Update the opacity of the active imageItem as well as the Image3D object."""
-        if self.image_view.getImageItem() is None:
-            return
-        # if self.active_image_index is None:
-        #     # TODO: raise an error or warning - no layer selected
-        #     return
-        opacity_value = value / 100  # convert slider value to a range of 0.0 - 1.0
-        if self.active_image_index == 0:
-            self.image_view.getImageItem().setOpacity(opacity_value)
-            self.image3D_obj_stack[0].alpha = opacity_value
-        else:
-            self.array2D_stack[self.active_image_index].setOpacity(opacity_value)
-            self.image3D_obj_stack[self.active_image_index].alpha = opacity_value
-
-    def _update_image_object(self):
-        """Update the display min and max of the active Image3D object.
-        This is the slot for the signal emitted when the user interacts with the histogram widget.
-        The histogram widget automatically updates the imageItem, so we also need to update the Image3D object."""
-        pass
-        # if self.is_user_histogram_interaction:
-        #     # only do this if the user has interacted with the histogram. Not when the histogram is programmatically
-        #     # updated by another method.
-        #     if self.active_image_index is None:
-        #         # TODO: raise an error or warning - no layer selected
-        #         return
-        #     levels = self.image_view.getHistogramWidget().getLevels()
-        #     self.image3D_obj_stack[self.active_image_index].display_min = levels[0]
-        #     self.image3D_obj_stack[self.active_image_index].display_max = levels[1]
-        # # TODO: update Image3D colormap, too?
-
-    def _reapply_lut(self):
-        # ensure the LUT remains as you defined it
-        found_bottom_image = False
-        for ind, im in enumerate(self.image3D_obj_stack):
-            if im is None:
-                continue
-            else:
-                if not found_bottom_image:
-                    found_bottom_image = True
-                    if im.lookup_table is not None:
-                        self.image_view.getImageItem().setLookupTable(im.lookup_table)
-                else:
-                    if self.array2D_stack[ind] is not None:
-                        self.array2D_stack[ind].setLookupTable(im.lookup_table)
-
-    def _toggle_histogram(self):
-        """toggle the visibility of the histogram/colormap/opacity widget"""
-        histogram = self.image_view.getHistogramWidget()
-        is_visible = histogram.isVisible()
-        histogram.setVisible(not is_visible)
-        # if self.active_image_index is None:
-        #     return
-        # if self.image3D_obj_stack[self.active_image_index] is not None:
-        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.active_image_index].colormap)
-        # self.image_view.updateImage()
-
-        # self._set_histogram_colormap(self.image3D_obj_stack[self.active_image_index].colormap)
-        self.opacity_slider.setVisible(not is_visible)
+    def set_canvas_layer(self, index):
+        """Set the canvas layer for painting."""
+        self.canvas_layer_index = index
 
     def plotdatacr_to_plotxy(self, plot_data_col, plot_data_row):
         """
@@ -1056,6 +871,240 @@ class Viewport(QWidget):
 
         return crs
 
+    def refresh_preserve_extent(self):
+        """
+        Refresh the viewport without changing the current view extent.
+        """
+        # save the current view state (extent)
+        view_box = self.image_view.getView()
+        current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
+
+        self.refresh()
+
+        # restore the view range
+        view_box.setRange(
+            xRange=current_range[0],
+            yRange=current_range[1],
+            padding=0  # Disable padding to restore exact range
+        )
+
+    def refresh(self):
+        """
+        Should be called when one of the images displayed in the viewport changes. Sets the image item, and connects the
+        histogram widget to the image item. Also updates the overlay images.
+        """
+
+        self.image_view.clear()
+
+        # the image stack may have empty slots, so we need to find the first non-empty image to display
+        found_bottom_image = False
+        self.background_image_index = None
+
+        for ind, im_obj in enumerate(self.image3D_obj_stack):
+            if im_obj is None:
+                continue
+            else:
+                if not found_bottom_image:
+                    # this is the bottom image in the stack and will be set as the 3D background image item in the
+                    # image view
+                    im_data = self.array3D_stack[ind]  # the (optionally transposed) 3D array
+                    # self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
+                    # setImage causes the z-slider slot to be called, which resets the current slice index to 0
+                    # disconnect slot to prevent this from happening
+                    try:
+                        # disconnect the slot before making changes
+                        self.image_view.timeLine.sigPositionChanged.disconnect(self._slice_changed)
+                    except TypeError:
+                        # if the slot was not connected, ignore the error
+                        pass
+                    self.image_view.setImage(im_data)
+                    # FIXME: set aspect ratio based on base image? What about overlay?
+                    if self.view_dir == ViewDir.AX.dir:
+                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dx / im_obj.dy)
+                    elif self.view_dir == ViewDir.COR.dir:
+                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dx / im_obj.dz)
+                    else:  # "SAG"
+                        self.image_view.view.setAspectLocked(True, ratio=im_obj.dy / im_obj.dz)
+
+                    self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
+
+                    # FIXME: testing
+                    # self.scatter_items = [pg.ScatterPlotItem() for _ in range(im_data.shape[0])]
+                    # for scatter in self.scatter_items:
+                    #     self.image_view.getView().addItem(scatter)
+
+                    main_image = self.image_view.getImageItem()
+                    # Set the levels to prevent LUT rescaling based on the slice content
+                    main_image.setLevels([im_obj.display_min, im_obj.display_max])
+                    # apply the opacity of the Image3D object to the ImageItem
+                    main_image.setOpacity(im_obj.alpha)
+                    main_image.setLookupTable(im_obj.lookup_table)
+
+                    # FIXME: correct? # radiological convention = RAS+ notation
+                    #  (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
+                    #  at the bottom of the screen?)
+                    self.image_view.getImageItem().getViewBox().invertY(False)
+                    if im_obj.x_dir == 'R':
+                        # x increases from screen right to left if RAS+ notation (and patient is HFS?)
+                        self.image_view.getImageItem().getViewBox().invertX(True)
+
+                    # self.is_user_histogram_interaction = True
+                    self.background_image_index = ind
+                    found_bottom_image = True
+                else:
+                    # this is an overlay image, so we need to get a slice of it and set it as an overlay
+                    self._update_overlay_slice(ind)  # uses self.current_slice_index
+
+                # set the current slice index to the first slice of the background image
+                try:
+                    # disconnect the slot before making changes
+                    self.image_view.timeLine.sigPositionChanged.disconnect(self._slice_changed)
+                except TypeError:
+                    # if the slot was not connected, ignore the error
+                    pass
+                self.image_view.setCurrentIndex(self.current_slice_index)
+                self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
+
+        # update the crosshairs
+        if self.background_image_index is None:
+            # no image to display, so hide slice guides, even if visibility is set to True
+            self.horizontal_line.setVisible(False)
+            self.vertical_line.setVisible(False)
+        else:
+            self.horizontal_line.setVisible(self.show_slice_guides)
+            self.vertical_line.setVisible(self.show_slice_guides)
+            if self.show_slice_guides:
+                self.horizontal_line.setPos(self.horizontal_line_idx)
+                self.vertical_line.setPos(self.vertical_line_idx)
+
+        self._update_markers_display()
+
+        self.image_view.show()
+
+    #  -----------------------------------------------------------------------------------------------------------------
+    #  "Private" methods -----------------------------------------------------------------------------------------------
+    #  -----------------------------------------------------------------------------------------------------------------
+
+
+
+    def _slice_changed(self):
+        """
+        Simply update self.current_slice_index from the imageView's current slice. Called when the z-slicer has changed.
+        :return:
+        """
+        self.current_slice_index = self.image_view.currentIndex
+
+        self.refresh_preserve_extent()
+
+        self.slice_changed_signal.emit(self.id, self.current_slice_index)
+
+    def _update_overlays(self):
+        """
+        When the slice index has changed, manually update the overlay image(s) with the corresponding slice from
+        the array3D.
+
+        :return:
+        """
+        if self.background_image_index == self.num_vols_allowed - 1:
+            # the bottom image is at the top of the stack - there are no overlay images
+            return
+
+        # loop through images in the stack above the background image
+        for layer_index in range(self.background_image_index + 1, self.num_vols_allowed):
+            if self.image3D_obj_stack[layer_index] is not None:
+                self._update_overlay_slice(layer_index)
+            else:
+                if self.array2D_stack[layer_index] is not None:
+                    self.array2D_stack[layer_index].clear()
+
+        self._update_markers_display()
+
+        # update coordinates to reflect the current slice (so it updates without needing to move the mouse)
+        coordinates_text = self.coordinates_label.text()
+        if len(coordinates_text) > 0:
+            pattern = r"x=\s*\d+,\s*y=\s*\d+,\s*z=\s*(\d+)"
+            new_z = self.image_view.currentIndex
+            # substitute the new z value
+            new_string = re.sub(pattern, lambda m: m.group(0).replace(m.group(1), f"{new_z:3d}"), coordinates_text)
+            self.coordinates_label.setText(new_string)
+
+    def _update_overlay_slice(self, layer_index):
+        """Update the overlay image with the current slice from the array3D."""
+        if self.array3D_stack[layer_index] is not None:
+            overlay_image_object = self.image3D_obj_stack[layer_index]
+            overlay_data = self.array3D_stack[layer_index]
+            overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
+            overlay_image_item = self.array2D_stack[layer_index]
+            # apply the slice to the overlay ImageItem
+            # self.is_user_histogram_interaction = False
+            overlay_image_item.setImage(overlay_slice)
+            # Set the levels to prevent LUT rescaling based on the slice content
+            overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
+            overlay_image_item.setOpacity(overlay_image_object.alpha)
+            overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
+
+    def _update_opacity(self, value):
+        """Update the opacity of the active imageItem as well as the Image3D object."""
+        if self.image_view.getImageItem() is None:
+            return
+        # if self.active_image_index is None:
+        #     # TODO: raise an error or warning - no layer selected
+        #     return
+        opacity_value = value / 100  # convert slider value to a range of 0.0 - 1.0
+        if self.active_image_index == 0:
+            self.image_view.getImageItem().setOpacity(opacity_value)
+            self.image3D_obj_stack[0].alpha = opacity_value
+        else:
+            self.array2D_stack[self.active_image_index].setOpacity(opacity_value)
+            self.image3D_obj_stack[self.active_image_index].alpha = opacity_value
+
+    def _update_image_object(self):
+        """Update the display min and max of the active Image3D object.
+        This is the slot for the signal emitted when the user interacts with the histogram widget.
+        The histogram widget automatically updates the imageItem, so we also need to update the Image3D object."""
+        pass
+        # if self.is_user_histogram_interaction:
+        #     # only do this if the user has interacted with the histogram. Not when the histogram is programmatically
+        #     # updated by another method.
+        #     if self.active_image_index is None:
+        #         # TODO: raise an error or warning - no layer selected
+        #         return
+        #     levels = self.image_view.getHistogramWidget().getLevels()
+        #     self.image3D_obj_stack[self.active_image_index].display_min = levels[0]
+        #     self.image3D_obj_stack[self.active_image_index].display_max = levels[1]
+        # # TODO: update Image3D colormap, too?
+
+    def _reapply_lut(self):
+        # ensure the LUT remains as you defined it
+        found_bottom_image = False
+        for ind, im in enumerate(self.image3D_obj_stack):
+            if im is None:
+                continue
+            else:
+                if not found_bottom_image:
+                    found_bottom_image = True
+                    if im.lookup_table is not None:
+                        self.image_view.getImageItem().setLookupTable(im.lookup_table)
+                else:
+                    if self.array2D_stack[ind] is not None:
+                        self.array2D_stack[ind].setLookupTable(im.lookup_table)
+
+    def _toggle_histogram(self):
+        """toggle the visibility of the histogram/colormap/opacity widget"""
+        histogram = self.image_view.getHistogramWidget()
+        is_visible = histogram.isVisible()
+        histogram.setVisible(not is_visible)
+        # if self.active_image_index is None:
+        #     return
+        # if self.image3D_obj_stack[self.active_image_index] is not None:
+        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.active_image_index].colormap)
+        # self.image_view.updateImage()
+
+        # self._set_histogram_colormap(self.image3D_obj_stack[self.active_image_index].colormap)
+        self.opacity_slider.setVisible(not is_visible)
+
+
+
     def _mouse_press(self, event):
         """
         Capture mouse press event and handle painting and point-related actions before passing the event back to pyqtgraph.
@@ -1097,13 +1146,13 @@ class Viewport(QWidget):
                     # print(f"_mouse_press image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
                     # add a point at the clicked screen position
-                    new_point = self.add_scatter_point(plot_x, plot_y, image_crs[0], image_crs[1], image_crs[2])
+                    new_point = self.add_marker(image_crs[0], image_crs[1], image_crs[2], 0) #TODO: set image index
                     if new_point is not None:
                         # set this new point as the selected point
-                        self.select_point(new_point, False)
+                        self.select_marker(new_point, False)
                         self.drag_point_mode = True  # user can drag the point to new position before mouse release
                         # update points display
-                        self._update_points_display()
+                        self._update_markers_display()
                         # emit point created signal
                         self.point_added_signal.emit(new_point, self.id, self.view_dir)
                     else:
@@ -1112,7 +1161,7 @@ class Viewport(QWidget):
                 else:
                     if len(self.scatter.pointsAt(plot_xy)) == 0:
                         # clicked in the plot, but not on a point. Deselect any selected points
-                        self.clear_selected_points()
+                        self.clear_selected_markers()
 
                     # pass the event back to pyqtgraph for any further processing
                     self.original_mouse_press(event)
@@ -1202,7 +1251,7 @@ class Viewport(QWidget):
                 self.selected_point['image_slice'] = image_crs[2]  # voxel index into the Image3D object
 
                 # update the ScatterPlotItem to reflect the new position
-                self._update_points_display()
+                self._update_markers_display()
                 # FIXME: during testing and dev
                 # print(self.selected_point)
                 self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
@@ -1371,126 +1420,35 @@ class Viewport(QWidget):
         # # reconnect the slot
         # self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
-    def add_scatter_point(self, plot_x, plot_y, image_col, image_row, image_slice, new_id=None):
+    def _update_markers_display(self):
         """
-        Add a point at the specified plot coordinates. The point is added to the list of points for the current slice.
-
-        :param image_col: int
-        :param image_row: int
-        :param image_slice: int
-        :param new_id: str (optional, unique id for the new point, for same point id in multiple viewports [landmarks])
-        :return: new_point: dict (point data)
-        """
-        new_point = None
-
-        # FIXME: use the image specified by point_layer_index, not necessarily the background_image_index?
-        # img_item = self.image_view.getImageItem()  # the image item of the ImageView widget
-        array3D = self.array3D_stack[self.background_image_index]  # 3D array of data, optionally transposed
-        # image3D_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
-
-        # shape is in the form (slices, cols, rows)
-        img_shape = array3D.shape  # shape of the 3D array, transposed from Image3D object
-        # coordinates into the 3D array used for plotting. This 3D array is transposed from the image3D object data
-        # in the sagittal and coronal cases.
-        plot_data_crs = self.imagecrs_to_plotdatacrs(image_col, image_row, image_slice)
-        if (0 <= plot_data_crs[0] < img_shape[1] and 0 <= plot_data_crs[1] < img_shape[2] and
-                0 <= plot_data_crs[2] < img_shape[0]):
-
-            # FIXME: during testing and dev
-            # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
-
-            # do we have any points on this slice yet?
-            if plot_data_crs[2] not in self.slice_points:  # slice_points organized by slice index of the 3D plot data
-                self.slice_points[plot_data_crs[2]] = []
-            if new_id is not None:
-                # use the provided id
-                point_id = new_id
-            else:
-                # create a unique id for the new  point
-                point_id = shortuuid.ShortUUID().random(length=8)  # short, unique, and human-readable is
-                # FIXME: check to see if this id is already in use (is that possible?)
-            # add the point with additional metadata
-            new_point = {
-                'plot_x': plot_x,
-                'plot_y': plot_y,
-                'id': point_id,
-                'image_col': image_col,      # voxel index into the image3D object data
-                'image_row': image_row,      # voxel index into the image3D object data
-                'image_slice': image_slice,    # voxel index into the image3D object data
-                'is_selected': False  # FIXME: might not be necessary if only one point can be selected at a time
-            }
-            self.slice_points[plot_data_crs[2]].append(new_point)
-
-        return new_point
-
-    def _update_points_display(self):
-        """
-        Update the display of points on the image view. Only display points for the current slice.
+        Update the display of markers on the image view. Only display markers for the current slice.
+        Does not call refresh()
 
         :return:
         """
-        # get points for the current slice
+        # get markers for the current slice
         current_slice = int(self.image_view.currentIndex)
-        points = self.slice_points.get(current_slice, [])
+        markers = self.slice_markers.get(current_slice, [])
 
-        # print(points)
+        # print(markers)
 
         # update ScatterPlotItem
-        if len(points) > 0:
-            spots = [
-                {
-                    'pos': (point['plot_x'], point['plot_y']), 'data': point,
-                    'brush': self.selected_brush if point['is_selected'] else self.idle_brush,
-                }
-                for point in points
-            ]
+        spots = []
+        if len(markers) > 0:
+            for marker in markers:
+                image_data_crs = self.imagecrs_to_plotdatacrs(marker['image_col'], marker['image_row'], marker['image_slice'])
+                plot_xy = self.plotdatacr_to_plotxy(image_data_crs[0], image_data_crs[1])
+                spots.append(
+                    {
+                        'pos': (plot_xy[0], plot_xy[1]), 'data': marker,
+                        'brush': self.selected_brush if marker['is_selected'] else self.idle_brush,
+                    } )
             # FIXME: testing and debugging
             # print(f"spots: {spots}")
             self.scatter.setData(spots=spots)
         else:
             self.scatter.clear()
-
-    def select_point(self, point, notify):
-        """
-        Set specified point as selected. Deselect any other point that was previously selected. Update the
-        display of points. Optionally notify the parent class.
-
-        :param point: dict (point data)
-        :param notify: bool (whether to notify the parent class)
-        :return:
-        """
-        if point is not None:
-            if self.selected_point is not None:
-                # deselect previously selected point
-                self.selected_point['is_selected'] = False
-            point['is_selected'] = True
-            self.selected_point = point
-            plot_data_crs = self.imagecrs_to_plotdatacrs(point['image_col'], point['image_row'], point['image_slice'])
-            self.current_slice_index = plot_data_crs[2]
-            self.goto_slice(plot_data_crs[2])
-            self.refresh_preserve_extent()
-            if notify:
-                self.point_selected_signal.emit(point, self.id, self.view_dir)
-
-    # def deselect_point(self, point, notify):
-    #     """
-    #     Set specified point as  not selected. Update the display of points. Optionally notify the parent class.
-    #
-    #     :param point: dict (point data)
-    #     :param notify: bool (whether to notify the parent class)
-    #     :return:
-    #     """
-    #     if point is not None:
-    #         if self.selected_point is not None:
-    #             # deselect previously selected point
-    #             self.selected_point['is_selected'] = False
-    #         point['is_selected'] = True
-    #         self.selected_point = point
-    #         plot_data_crs = self.imagecrs_to_plotdatacrs(point['image_col'], point['image_row'], point['image_slice'])
-    #         self.current_slice_index = plot_data_crs[2]
-    #         self.refresh_preserve_extent()
-    #         if notify:
-    #             self.point_deselected_signal.emit(point, self.id, self.view_dir)
 
     def _scatter_mouse_press(self, event, point):
         """
@@ -1505,7 +1463,7 @@ class Viewport(QWidget):
             if point is not None:
                 is_selected = point.get('is_selected')
                 if not is_selected:
-                    self.select_point(point, True)
+                    self.select_marker(point, True)
                 else:
                     # this point was already selected, allow it to be dragged to a new position
                     self.drag_point_mode = True
@@ -1547,8 +1505,8 @@ class Viewport(QWidget):
     #     clicked_pos = clicked_point.pos()  # Get the (x, y) position of the point
     #     current_slice = int(self.image_view.currentIndex)
     #
-    #     # find the clicked point by position in the slice_points data structure
-    #     for point in self.slice_points.get(current_slice, []):
+    #     # find the clicked point by position in the slice_markers data structure
+    #     for point in self.slice_markers.get(current_slice, []):
     #         if point['voxel_col'] == clicked_pos[0] and point['voxel_row'] == clicked_pos[1]:
     #             point['is_selected'] = not point['is_selected']  # toggle selection
     #             self.current_point = point
@@ -1557,7 +1515,7 @@ class Viewport(QWidget):
     #
     #     if self.current_point is not None:
     #         # update the display of points
-    #         self._update_points_display()
+    #         self._update_markers_display()
     #         # notify the parent class about the selected point
     #         self.point_selected_signal.emit(point['id'], point['is_selected'], self.id, self.view_dir)
 
@@ -1569,8 +1527,8 @@ class Viewport(QWidget):
     #     :param slice_index: int (slice index)
     #     :return: dict (point data)
     #     """
-    #     if slice_index in self.slice_points:
-    #         return self.slice_points[slice_index].get(point_id, None)
+    #     if slice_index in self.slice_markers:
+    #         return self.slice_markers[slice_index].get(point_id, None)
     #     return None
 
 
