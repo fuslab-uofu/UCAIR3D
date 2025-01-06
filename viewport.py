@@ -89,6 +89,9 @@ class Viewport(QWidget):
         self.window_im = _window_method  # TODO: future implementation, custom method for windowing
         self.interaction_state = None  # implemented values: 'painting', 'erasing'
 
+        # alpha blending is special case where...
+        self.alpha_blending = _alpha_blending
+
         # interactive point placement
         self.add_point_mode = False  # if adding points, are we placing a new point?
         self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
@@ -223,10 +226,10 @@ class Viewport(QWidget):
         # self.scatter.set_mouse_release_callback(self._scatter_mouse_release)
         self.image_view.getView().addItem(self.scatter)
 
-        # differentiate between user interacting with histogram widget and histogram updated by the viewport
-        # self.is_user_histogram_interaction = True
-        # self.image_view.getHistogramWidget().sigLevelChangeFinished.connect(self._update_image_object)
-        # self.image_view.getHistogramWidget().sigLookupTableChanged.connect(self._reapply_lut)
+        # TODO: WIP
+        # special case
+        if self.alpha_blending:
+            self.image_view.getImageItem().setVisible(False)
 
         # connect the mouse move event to the graphics scene
         self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
@@ -368,7 +371,7 @@ class Viewport(QWidget):
         # TODO
         pass
 
-    def get_current_slice(self):
+    def get_current_slice_index(self):
         return self.image_view.currentIndex
 
     # points -----------------------------------------------------------------------------------------------------------
@@ -647,6 +650,49 @@ class Viewport(QWidget):
             new_string = re.sub(pattern, lambda m: m.group(0).replace(m.group(1), f"{new_z:3d}"), coordinates_text)
             self.coordinates_label.setText(new_string)
 
+    def blend_background_with_layer(self, bg_pct, layer_idx, layer_pct):
+        """
+        Blend the current slice of the background image with the current slice of the image specified by layer_idx.
+        The alpha values are used to generate a weighted sum, thus resulting in an "alpha blended" image.
+
+        :param bg_pct: float (0.0 - 1.0)
+        :param layer_idx: index of the volume to blend with the background
+        :param layer_pct: float (0.0 - 1.0)
+        :return: 2D numpy array
+        """
+        background_image = self.image3D_obj_stack[0]
+        background_data = self.array3D_stack[0]
+        background_slice = (background_data[int(self.image_view.currentIndex), :, :]).astype(np.int32)
+        background_cmap = pg.colormap.get(background_image.colormap_name)
+        background_rgb = background_cmap.map(background_slice)
+
+        layer_image = self.image3D_obj_stack[layer_idx]
+        layer_data = self.array3D_stack[layer_idx]
+        layer_slice = (layer_data[int(self.image_view.currentIndex), :, :]).astype(np.int32)
+        layer_cmap = pg.colormap.get(layer_image.colormap_name)
+        layer_rgb = layer_cmap.map(layer_slice)
+        layer_image_item = self.array2D_stack[layer_idx]
+
+        # normalize the slices to 0-255
+        # background_norm = ((background_slice - np.min(background_slice)) / (np.max(background_slice) - np.min(background_slice))) * 255
+        # layer_norm = ((layer_slice - np.min(layer_slice)) / (np.max(layer_slice) - np.min(layer_slice))) * 255
+        background_norm = ((background_slice - np.min(background_data)) / (np.max(background_data) - np.min(background_data))) * 255
+        layer_norm = ((layer_slice - np.min(layer_data)) / (np.max(layer_data) - np.min(layer_data))) * 255
+
+        # slices to colormap
+        background_rgb = background_cmap.map(background_norm, mode='byte')
+        layer_rgb = layer_cmap.map(layer_norm, mode='byte')
+
+        # blend
+        blended_slice = bg_pct * background_slice + layer_pct * layer_slice
+        # blended_slice = (bg_pct * background_rgb + layer_pct * layer_rgb).astype(np.uint8)
+
+        # self.image_view.clear()
+        layer_image_item.setImage(blended_slice)
+        # layer_image_item.setImage(background_rgb)
+        # self.image_view.show()
+        # self.refresh_preserve_extent()
+
     def _update_overlay_slice(self, layer_index):
         """Update the overlay image with the current slice from the array3D."""
         if self.array3D_stack[layer_index] is not None:
@@ -661,32 +707,6 @@ class Viewport(QWidget):
             overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
             overlay_image_item.setOpacity(overlay_image_object.alpha)
             overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
-            # self.is_user_histogram_interaction = True
-
-            # def _set_overlay_slice(self, layer_index):
-            #     """Set the overlay image with the current slice from the array3D."""
-            #     if self.array3D_stack[layer_index] is not None:
-            #         overlay_image_object = self.image3D_obj_stack[layer_index]
-            #         overlay_data = self.array3D_stack[layer_index]
-            #         overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
-            #         overlay_image_item = self.array2D_stack[layer_index]
-            #         # apply the slice to the overlay ImageItem
-            #         self.is_user_histogram_interaction = False
-            #         overlay_image_item.setImage(overlay_slice)
-            #         # Set the levels to [0, 2] to avoid LUT rescaling based on the slice content
-            #         overlay_image_item.setLevels([0, 2])  # FIXME: during dev
-            #         overlay_image_item.setOpacity(overlay_image_object.alpha)
-            #         overlay_image_item.setLookupTable(overlay_image_object.colormap)
-            #         # self.image_view.updateImage()
-
-            # # Manually reapply the LUT of the base image to ensure it doesn't change
-            # if self.active_image_index != 0:
-            #     base_image_item = self.image_view.getImageItem()  # Assuming the base image is layer 0
-            #     base_image_item.setLookupTable(self.image3D_obj_stack[0].colormap)  # Reapply the base image LUT
-
-            # self.is_user_histogram_interaction = True
-        # else:
-        #     self.array2D_stack[layer_index].clear()
 
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""
