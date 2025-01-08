@@ -199,6 +199,9 @@ class Viewport(QWidget):
         # but don't show them until an image is displayed
         self.horizontal_line.setVisible(False)
         self.vertical_line.setVisible(False)
+        # ensure that these lines are always on top
+        self.horizontal_line.setZValue(10)
+        self.vertical_line.setZValue(10)
 
         """ NOTE: the pyqtgraph ImageView object displays only one 3D image at a time. To have overlays, 2D slices 
         are added to the ImageView. For our Viewport object, the main/background image is the 3D array of the data
@@ -225,11 +228,6 @@ class Viewport(QWidget):
         self.scatter.set_mouse_press_callback(self._scatter_mouse_press)
         # self.scatter.set_mouse_release_callback(self._scatter_mouse_release)
         self.image_view.getView().addItem(self.scatter)
-
-        # TODO: WIP
-        # special case
-        if self.alpha_blending:
-            self.image_view.getImageItem().setVisible(False)
 
         # connect the mouse move event to the graphics scene
         self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
@@ -354,6 +352,7 @@ class Viewport(QWidget):
             self.image_view.getImageItem().setVisible(False)
         else:
             self.array2D_stack[stack_position].setVisible(False)
+        self.scatter.setVisible(False)
 
     def show_layer(self, stack_position):
         if self.image3D_obj_stack[stack_position] is None:
@@ -362,6 +361,7 @@ class Viewport(QWidget):
             self.image_view.getImageItem().setVisible(True)
         else:
             self.array2D_stack[stack_position].setVisible(True)
+        self.scatter.setVisible(True)
 
     def move_layer_up(self):
         # TODO
@@ -938,6 +938,9 @@ class Viewport(QWidget):
                     main_image.setLevels([im_obj.display_min, im_obj.display_max])
                     # apply the opacity of the Image3D object to the ImageItem
                     main_image.setOpacity(im_obj.alpha)
+                    # FIXME: testing
+                    print(f"{im_obj.file_base_name} opacity: {im_obj.alpha}")
+
                     main_image.setLookupTable(im_obj.lookup_table)
 
                     # FIXME: correct? # radiological convention = RAS+ notation
@@ -965,6 +968,8 @@ class Viewport(QWidget):
                 self.image_view.setCurrentIndex(self.current_slice_index)
                 self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
+        self._update_markers_display()
+
         # update the crosshairs
         if self.background_image_index is None:
             # no image to display, so hide slice guides, even if visibility is set to True
@@ -976,8 +981,6 @@ class Viewport(QWidget):
             if self.show_slice_guides:
                 self.horizontal_line.setPos(self.horizontal_line_idx)
                 self.vertical_line.setPos(self.vertical_line_idx)
-
-        self._update_markers_display()
 
         self.image_view.show()
 
@@ -1041,6 +1044,8 @@ class Viewport(QWidget):
             # Set the levels to prevent LUT rescaling based on the slice content
             overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
             overlay_image_item.setOpacity(overlay_image_object.alpha)
+            # FIXME: testing
+            print(f"{overlay_image_object.file_base_name} opacity: {overlay_image_object.alpha}")
             overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
 
     def _update_opacity(self, value):
@@ -1074,34 +1079,34 @@ class Viewport(QWidget):
         #     self.image3D_obj_stack[self.active_image_index].display_max = levels[1]
         # # TODO: update Image3D colormap, too?
 
-    def _reapply_lut(self):
-        # ensure the LUT remains as you defined it
-        found_bottom_image = False
-        for ind, im in enumerate(self.image3D_obj_stack):
-            if im is None:
-                continue
-            else:
-                if not found_bottom_image:
-                    found_bottom_image = True
-                    if im.lookup_table is not None:
-                        self.image_view.getImageItem().setLookupTable(im.lookup_table)
-                else:
-                    if self.array2D_stack[ind] is not None:
-                        self.array2D_stack[ind].setLookupTable(im.lookup_table)
-
-    def _toggle_histogram(self):
-        """toggle the visibility of the histogram/colormap/opacity widget"""
-        histogram = self.image_view.getHistogramWidget()
-        is_visible = histogram.isVisible()
-        histogram.setVisible(not is_visible)
-        # if self.active_image_index is None:
-        #     return
-        # if self.image3D_obj_stack[self.active_image_index] is not None:
-        #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.active_image_index].colormap)
-        # self.image_view.updateImage()
-
-        # self._set_histogram_colormap(self.image3D_obj_stack[self.active_image_index].colormap)
-        self.opacity_slider.setVisible(not is_visible)
+    # def _reapply_lut(self):
+    #     # ensure the LUT remains as you defined it
+    #     found_bottom_image = False
+    #     for ind, im in enumerate(self.image3D_obj_stack):
+    #         if im is None:
+    #             continue
+    #         else:
+    #             if not found_bottom_image:
+    #                 found_bottom_image = True
+    #                 if im.lookup_table is not None:
+    #                     self.image_view.getImageItem().setLookupTable(im.lookup_table)
+    #             else:
+    #                 if self.array2D_stack[ind] is not None:
+    #                     self.array2D_stack[ind].setLookupTable(im.lookup_table)
+    #
+    # def _toggle_histogram(self):
+    #     """toggle the visibility of the histogram/colormap/opacity widget"""
+    #     histogram = self.image_view.getHistogramWidget()
+    #     is_visible = histogram.isVisible()
+    #     histogram.setVisible(not is_visible)
+    #     # if self.active_image_index is None:
+    #     #     return
+    #     # if self.image3D_obj_stack[self.active_image_index] is not None:
+    #     #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.active_image_index].colormap)
+    #     # self.image_view.updateImage()
+    #
+    #     # self._set_histogram_colormap(self.image3D_obj_stack[self.active_image_index].colormap)
+    #     self.opacity_slider.setVisible(not is_visible)
 
 
 
