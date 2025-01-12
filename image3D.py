@@ -57,6 +57,9 @@ class Image3D:
 
         self.visible = True
 
+        # dictionary to store the 'geometry' of the volume. Convenient for comparing image shape, resolution, origin.
+        self.geometry = {}
+
     # def populate(self, dataset, dataset_type, dataset_name):
     #     """
     #     Parameters
@@ -141,6 +144,8 @@ class Image3D:
 
         self.data_min = np.min(self.data)
         self.data_max = np.max(self.data)
+
+        self.geometry = {'shape' : self.data.shape, 'spacing' : [self.dx, self.dy, self.dz], 'origin' : self.transform[:3, 3]}
 
     def get_slice(self, view, slice_num):
         """

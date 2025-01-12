@@ -310,6 +310,8 @@ class Viewport(QWidget):
         else:
             self.array3D_stack[stack_position] = None
 
+            # FIXME: correct?
+            self.background_image_index = 0
             # self.horizontal_line.setVisible(False)
             # self.vertical_line.setVisible(False)
 
@@ -939,7 +941,7 @@ class Viewport(QWidget):
                     # apply the opacity of the Image3D object to the ImageItem
                     main_image.setOpacity(im_obj.alpha)
                     # FIXME: testing
-                    print(f"{im_obj.file_base_name} opacity: {im_obj.alpha}")
+                    # print(f"{im_obj.file_base_name} opacity: {im_obj.alpha}")
 
                     main_image.setLookupTable(im_obj.lookup_table)
 
@@ -1045,7 +1047,7 @@ class Viewport(QWidget):
             overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
             overlay_image_item.setOpacity(overlay_image_object.alpha)
             # FIXME: testing
-            print(f"{overlay_image_object.file_base_name} opacity: {overlay_image_object.alpha}")
+            # print(f"{overlay_image_object.file_base_name} opacity: {overlay_image_object.alpha}")
             overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
 
     def _update_opacity(self, value):
