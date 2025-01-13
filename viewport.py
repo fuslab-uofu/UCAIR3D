@@ -96,6 +96,7 @@ class Viewport(QWidget):
         self.add_point_mode = False  # if adding points, are we placing a new point?
         self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
         self.drag_point_mode = False  # are we dragging a point to a new location?
+        self.edit_point_mode = False  # are we editing the location of a point?
         self.point_moved = False
         self.points = []  # this will be a list of point objects?
         self.selected_point = None
@@ -401,6 +402,8 @@ class Viewport(QWidget):
         # coordinates of marker in the 3D array used for plotting. This 3D array is transposed from the image3D object
         # data in the sagittal and coronal cases.
         plot_data_crs = self.imagecrs_to_plotdatacrs(image_col, image_row, image_slice)
+        if plot_data_crs is None:
+            return None
         if (0 <= plot_data_crs[0] < plot_data_shape[1] and 0 <= plot_data_crs[1] < plot_data_shape[2] and
             0 <= plot_data_crs[2] < plot_data_shape[0]):
 
@@ -429,27 +432,30 @@ class Viewport(QWidget):
 
         return new_marker
 
-    def select_marker(self, point, notify):
+    def select_marker(self, mkr, notify):
         """
         Set specified point as selected. Deselect any other point that was previously selected. Update the
         display of points. Optionally notify the parent class.
 
-        :param point: dict (point data)
+        :param mkr: dict (marker data)
         :param notify: bool (whether to notify the parent class)
         :return:
         """
-        if point is not None:
+        if mkr is not None:
             if self.selected_point is not None:
                 # deselect previously selected point
                 self.selected_point['is_selected'] = False
-            point['is_selected'] = True
-            self.selected_point = point
-            plot_data_crs = self.imagecrs_to_plotdatacrs(point['image_col'], point['image_row'], point['image_slice'])
+            mkr['is_selected'] = True
+            self.selected_point = mkr
+            plot_data_crs = self.imagecrs_to_plotdatacrs(mkr['image_col'], mkr['image_row'], mkr['image_slice'])
+            if plot_data_crs is None:
+                return  # FIXME: how to handle?
+
             self.current_slice_index = plot_data_crs[2]
             self.goto_slice(plot_data_crs[2])
             self.refresh_preserve_extent()
             if notify:
-                self.point_selected_signal.emit(point, self.id, self.view_dir)
+                self.point_selected_signal.emit(mkr, self.id, self.view_dir)
 
     def find_marker_by_id(self, point_id):
         """
@@ -728,13 +734,16 @@ class Viewport(QWidget):
         :param voxel_col:
         :param voxel_row:
         :param voxel_slice:
-        :return: crs np.array([plot_data_col, plot_data_row, plot_data_slice])
+        :return: crs np.array([plot_data_col, plot_data_row, plot_data_slice]) or None
         """
-        # return self.plotdatacrs_to_imagecrs(voxel_col, voxel_row, voxel_slice)  # a trick
+
+        crs = None
+
+        if self.background_image_index is None:
+            return crs
 
         image3D_obj = self.image3D_obj_stack[self.background_image_index]
 
-        crs = None
         if image3D_obj is not None:
             if self.display_convention == 'RAS':
                 if self.view_dir == ViewDir.AX.dir:
@@ -1006,7 +1015,7 @@ class Viewport(QWidget):
     def _update_overlays(self):
         """
         When the slice index has changed, manually update the overlay image(s) with the corresponding slice from
-        the array3D.
+        the array3D. If slice index is out of range of overlay data, just return.
 
         :return:
         """
@@ -1034,11 +1043,21 @@ class Viewport(QWidget):
             self.coordinates_label.setText(new_string)
 
     def _update_overlay_slice(self, layer_index):
-        """Update the overlay image with the current slice from the array3D."""
+        """
+        Update the overlay image with the current slice from the overlay data. If layer_index is out of bounds of the
+        overlay, just return.
+
+        """
         if self.array3D_stack[layer_index] is not None:
             overlay_image_object = self.image3D_obj_stack[layer_index]
             overlay_data = self.array3D_stack[layer_index]
-            overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
+            if int(self.image_view.currentIndex) > overlay_data.shape[0]:
+                # the current slice index is out of bounds of the overlay data
+                # FIXME: how to handle this? Never allow overlay to be different geometry than the base image?
+                #  set some sort of warning icon?
+                return
+            else:
+                overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
             overlay_image_item = self.array2D_stack[layer_index]
             # apply the slice to the overlay ImageItem
             # self.is_user_histogram_interaction = False
@@ -1445,6 +1464,8 @@ class Viewport(QWidget):
         if len(markers) > 0:
             for marker in markers:
                 image_data_crs = self.imagecrs_to_plotdatacrs(marker['image_col'], marker['image_row'], marker['image_slice'])
+                if image_data_crs is None:
+                    continue
                 plot_xy = self.plotdatacr_to_plotxy(image_data_crs[0], image_data_crs[1])
                 spots.append(
                     {
@@ -1468,12 +1489,11 @@ class Viewport(QWidget):
         if self.point_im is not None and self.point_im.matches_event(event):
             # only respond to the event if the interaction method matches (for example, shift + left click)
             if point is not None:
-                is_selected = point.get('is_selected')
-                if not is_selected:
-                    self.select_marker(point, True)
+                if point.get('is_selected') and self.edit_point_mode:
+                    self.drag_point_mode = True
                 else:
                     # this point was already selected, allow it to be dragged to a new position
-                    self.drag_point_mode = True
+                    self.select_marker(point, True)
 
                 # FIXME: during testing and dev
                 # print(f"_scatter_mouse_press: {point}")
