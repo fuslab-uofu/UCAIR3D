@@ -35,7 +35,7 @@ class CustomScatterPlotItem(pg.ScatterPlotItem):
             clicked_spot = clicked_spots[0]  # Assume only one point is clicked
             point_data = clicked_spot.data()  # Access the metadata for the point
 
-            # # FIXME: during testing and dev
+            # # DEBUG:
             # print(f"CustomScatterPlotItem:_mousePressEvent: {point_data} at position {clicked_spot.pos()}")
 
             # call the custom callback if provided
@@ -83,7 +83,7 @@ class Viewport(QWidget):
         #   zooming, panning, and windowing)panning, and windowing)
         self.paint_im = _paint_method  # method for painting
         self.erase_im = _erase_method  # method for erasing
-        self.point_im = _point_method  # method for making points
+        self.mark_im = _point_method  # method for making points
         self.zoom_im = _zoom_method  # TODO: future implementation, custom zoom method
         self.pan_im = _pan_method  # TODO: future implementation, custom pan method
         self.window_im = _window_method  # TODO: future implementation, custom method for windowing
@@ -96,7 +96,7 @@ class Viewport(QWidget):
         self.add_point_mode = False  # if adding points, are we placing a new point?
         self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
         self.drag_point_mode = False  # are we dragging a point to a new location?
-        self.edit_point_mode = False  # are we editing the location of a point?
+        self.edit_marker_mode = False  # are we editing the location of a point?
         self.point_moved = False
         self.points = []  # this will be a list of point objects?
         self.selected_point = None
@@ -276,7 +276,7 @@ class Viewport(QWidget):
                 # axial view: transpose image data (x, y, z) to (z, x, y) for pyqtgraph
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (2, 0, 1))
-                # FIXME: during testing and dev
+                # DEBUG:
                 # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
                 ratio = image.dy / image.dx
@@ -285,7 +285,7 @@ class Viewport(QWidget):
                 # then save the transposed array  # FIXME: should z be flipped? like x, -z, y?
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (1, 0, 2))
-                # FIXME: during testing and dev
+                # DEBUG:
                 # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
                 ratio = image.dz / image.dx
@@ -294,7 +294,7 @@ class Viewport(QWidget):
                 # then save the transposed array
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (0, 1, 2))
-                # FIXME: during testing and dev
+                # DEBUG:
                 # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
                 ratio = image.dz / image.dy
@@ -310,11 +310,10 @@ class Viewport(QWidget):
             self.slice_changed_signal.emit(self.id, self.current_slice_index)
         else:
             self.array3D_stack[stack_position] = None
+            self.array2D_stack[stack_position].setImage(np.zeros((1, 1)))  # clear the image
 
             # FIXME: correct?
             self.background_image_index = 0
-            # self.horizontal_line.setVisible(False)
-            # self.vertical_line.setVisible(False)
 
         self.refresh()
 
@@ -329,7 +328,7 @@ class Viewport(QWidget):
         :return:
         """
         img_item = self.image_view.getImageItem()
-        if img_item is not None:
+        if img_item is not None and self.background_image_index is not None:
             array3D = self.array3D_stack[self.background_image_index]  # 3D array of data, optionally transposed
             if array3D is not None:
                 img_shape = array3D.shape
@@ -351,7 +350,7 @@ class Viewport(QWidget):
     def hide_layer(self, stack_position):
         if self.image3D_obj_stack[stack_position] is None:
             return
-        if stack_position == self.background_image_index:
+        if self.background_image_index is not None and stack_position == self.background_image_index:
             self.image_view.getImageItem().setVisible(False)
         else:
             self.array2D_stack[stack_position].setVisible(False)
@@ -360,7 +359,7 @@ class Viewport(QWidget):
     def show_layer(self, stack_position):
         if self.image3D_obj_stack[stack_position] is None:
             return
-        if stack_position == self.background_image_index:
+        if self.background_image_index is not None and stack_position == self.background_image_index:
             self.image_view.getImageItem().setVisible(True)
         else:
             self.array2D_stack[stack_position].setVisible(True)
@@ -407,7 +406,7 @@ class Viewport(QWidget):
         if (0 <= plot_data_crs[0] < plot_data_shape[1] and 0 <= plot_data_crs[1] < plot_data_shape[2] and
             0 <= plot_data_crs[2] < plot_data_shape[0]):
 
-            # FIXME: during testing and dev
+            # DEBUG:
             # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
             # do we have any markers on this slice yet?
@@ -600,9 +599,13 @@ class Viewport(QWidget):
         :param plot_data_row: int
         :return: plot_x, plot_y [int, int]
         """
+        xy = None
+
+        if self.background_image_index is None:
+            return xy
+
         image3D_obj = self.image3D_obj_stack[self.background_image_index]
 
-        xy = None
         if image3D_obj is not None:
             if self.display_convention == 'RAS':
                 if self.view_dir == ViewDir.AX.dir:
@@ -658,10 +661,14 @@ class Viewport(QWidget):
         :return:
         """
 
+        crs = None
+
+        if self.background_image_index is None:
+            return crs
+
         # the Image3D object that the plot data originates from. Only needed here for info about axes directions
         image3D_obj = self.image3D_obj_stack[self.background_image_index]
 
-        crs = None
         if image3D_obj is not None:
             if self.display_convention == 'RAS':
                 if self.view_dir == ViewDir.AX.dir:
@@ -818,9 +825,14 @@ class Viewport(QWidget):
         :param plot_data_slice:
         :return: crs: np.array([voxel_col, voxel_row, voxel_slice])
         """
-        image3D_obj = self.image3D_obj_stack[self.background_image_index]
 
         crs = None
+
+        if self.background_image_index is None:
+            return crs
+
+        image3D_obj = self.image3D_obj_stack[self.background_image_index]
+
         if image3D_obj is not None:
             if self.display_convention == 'RAS':
                 if self.view_dir == ViewDir.AX.dir:
@@ -1051,23 +1063,20 @@ class Viewport(QWidget):
         if self.array3D_stack[layer_index] is not None:
             overlay_image_object = self.image3D_obj_stack[layer_index]
             overlay_data = self.array3D_stack[layer_index]
+            overlay_image_item = self.array2D_stack[layer_index]
             if int(self.image_view.currentIndex) > overlay_data.shape[0]:
                 # the current slice index is out of bounds of the overlay data
-                # FIXME: how to handle this? Never allow overlay to be different geometry than the base image?
-                #  set some sort of warning icon?
-                return
+                overlay_image_item.setImage(None)
             else:
-                overlay_slice = overlay_data[int(self.image_view.currentIndex), :, :]
-            overlay_image_item = self.array2D_stack[layer_index]
-            # apply the slice to the overlay ImageItem
-            # self.is_user_histogram_interaction = False
-            overlay_image_item.setImage(overlay_slice)
-            # Set the levels to prevent LUT rescaling based on the slice content
-            overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
-            overlay_image_item.setOpacity(overlay_image_object.alpha)
-            # FIXME: testing
-            # print(f"{overlay_image_object.file_base_name} opacity: {overlay_image_object.alpha}")
-            overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
+                overlay_slice = overlay_data[int(self.image_view.currentIndex)-1, :, :]
+                # apply the slice to the overlay ImageItem
+                overlay_image_item.setImage(overlay_slice)
+                # Set the levels to prevent LUT rescaling based on the slice content
+                overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
+                overlay_image_item.setOpacity(overlay_image_object.alpha)
+                # FIXME: testing
+                # print(f"{overlay_image_object.file_base_name} opacity: {overlay_image_object.alpha}")
+                overlay_image_item.setLookupTable(overlay_image_object.lookup_table)
 
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""
@@ -1138,7 +1147,7 @@ class Viewport(QWidget):
         :param event:
         :return:
         """
-        # FIXME: during testing and dev
+        # DEBUG:
         # print(f"_mouse_press scene: {event.scenePos()}")
 
         img_item = self.image_view.getImageItem()
@@ -1158,32 +1167,34 @@ class Viewport(QWidget):
             elif self.erase_im is not None and self.erase_im.matches_event(event):
                 self.interaction_state = 'erasing'
                 self._mouse_move(event)
-            elif self.point_im is not None and self.point_im.matches_event(event):
+            elif self.mark_im is not None and self.mark_im.matches_event(event):
                 if self.add_point_mode:  # adding point
                     plot_x = int(plot_xy.x())
                     plot_y = int(plot_xy.y())
-                    # FIXME: during testing and dev
+                    # DEBUG:
                     # print(f"_mouse_press plot coordinates: x: {plot_x}, y: {plot_y}")
                     plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
-                    # FIXME: during testing and dev
-                    # print(f"_mouse_press plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
-                    image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
-                    # FIXME: during testing and dev
-                    # print(f"_mouse_press image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+                    if plot_data_crs is not None:  # FIXME: pass to original mouse press if None?
+                        # DEBUG:
+                        # print(f"_mouse_press plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
+                        image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
+                        if image_crs is not None: # FIXME: pass to original mouse press if None?
+                            # DEBUG:
+                            # print(f"_mouse_press image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
-                    # add a point at the clicked screen position
-                    new_point = self.add_marker(image_crs[0], image_crs[1], image_crs[2], 0) #TODO: set image index
-                    if new_point is not None:
-                        # set this new point as the selected point
-                        self.select_marker(new_point, False)
-                        self.drag_point_mode = True  # user can drag the point to new position before mouse release
-                        # update points display
-                        self._update_markers_display()
-                        # emit point created signal
-                        self.point_added_signal.emit(new_point, self.id, self.view_dir)
-                    else:
-                        # pass the event back to pyqtgraph for any further processing
-                        self.original_mouse_press(event)
+                            # add a point at the clicked screen position
+                            new_point = self.add_marker(image_crs[0], image_crs[1], image_crs[2], 0) #TODO: set image index
+                            if new_point is not None:
+                                # set this new point as the selected point
+                                self.select_marker(new_point, False)
+                                self.drag_point_mode = True  # user can drag the point to new position before mouse release
+                                # update points display
+                                self._update_markers_display()
+                                # emit point created signal
+                                self.point_added_signal.emit(new_point, self.id, self.view_dir)
+                            else:
+                                # pass the event back to pyqtgraph for any further processing
+                                self.original_mouse_press(event)
                 else:
                     if len(self.scatter.pointsAt(plot_xy)) == 0:
                         # clicked in the plot, but not on a point. Deselect any selected points
@@ -1208,7 +1219,7 @@ class Viewport(QWidget):
         # position of the cursor in the scene (origin in upper left corner of the whole viewport scene)
         scene_xy_qpoint = event.scenePos()
 
-        # FIXME: during testing and dev
+        # DEBUG:
         # print(f"Scene coordinates: {scene_xy_qpoint}")
 
         if self.background_image_index is None or self.image3D_obj_stack[self.background_image_index] is None:
@@ -1232,7 +1243,7 @@ class Viewport(QWidget):
             plot_x = int(plot_mouse_point.x())
             plot_y = int(plot_mouse_point.y())
 
-            # FIXME: during testing and dev
+            # DEBUG:
             # print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
 
             # get the voxel indices of the cursor in the 3D image data
@@ -1242,13 +1253,20 @@ class Viewport(QWidget):
             #  the z-axis, the second is the x-axis, and the third is the y-axis.
 
             plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
+            if plot_data_crs is None:
+                self.coordinates_label.setText("")
+                return
 
-            # FIXME: during testing and dev
+            # DEBUG:
             # print(f"Plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
 
             image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
+            if image_crs is None:
+                # position is outside the image bounds, just clear the coords label
+                self.coordinates_label.setText("")
+                return
 
-            # FIXME: during testing and dev
+            # DEBUG:
             # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
 
             # update the coordinates label
@@ -1264,10 +1282,10 @@ class Viewport(QWidget):
                 self._apply_brush(plot_x, plot_y, True)
             elif self.interaction_state == 'erasing':
                 self._apply_brush(plot_x, plot_y, False)
-            elif self.drag_point_mode and self.selected_point is not None:  # FIXME: need to check point_im?
+            elif self.drag_point_mode and self.selected_point is not None:  # FIXME: need to check mark_im?
                 # dragging point
                 self.point_moved = True
-                # FIXME: during testing and dev
+                # DEBUG:
                 # print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
                 # print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
                 self.selected_point['plot_x'] = plot_x
@@ -1278,7 +1296,7 @@ class Viewport(QWidget):
 
                 # update the ScatterPlotItem to reflect the new position
                 self._update_markers_display()
-                # FIXME: during testing and dev
+                # DEBUG:
                 # print(self.selected_point)
                 self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
             else:
@@ -1294,7 +1312,7 @@ class Viewport(QWidget):
         :return:
         Disable painting, erasing, and dragging point actions and pass the event back to pyqtgraph.
         """
-        # FIXME: during testing and dev
+        # DEBUG:
         # print("_mouse_release")
 
         self.interaction_state = None
@@ -1467,6 +1485,8 @@ class Viewport(QWidget):
                 if image_data_crs is None:
                     continue
                 plot_xy = self.plotdatacr_to_plotxy(image_data_crs[0], image_data_crs[1])
+                if plot_xy is None:
+                    continue
                 spots.append(
                     {
                         'pos': (plot_xy[0], plot_xy[1]), 'data': marker,
@@ -1478,29 +1498,31 @@ class Viewport(QWidget):
         else:
             self.scatter.clear()
 
-    def _scatter_mouse_press(self, event, point):
+    def _scatter_mouse_press(self, evt, mkr):
         """
-        When user clicks on a point. If the point is not already selected, select it. If the point
+        When user clicks on a marker. If the marker is not already selected, select it. If the marker
         is already selected, allow it to be dragged to a new position.
 
-        :param event:
+        :param evt: the clicking on a marker event
+        :param mkr: the marker that was clicked
         :return:
         """
-        if self.point_im is not None and self.point_im.matches_event(event):
+        if self.mark_im is not None and self.mark_im.matches_event(evt):
             # only respond to the event if the interaction method matches (for example, shift + left click)
-            if point is not None:
-                if point.get('is_selected') and self.edit_point_mode:
+            if mkr is not None:
+                if mkr.get('is_selected'):  # and self.edit_marker_mode:
                     self.drag_point_mode = True
+                    # DEBUG:
+                    print(f'Marker picked: {self.drag_point_mode}')
                 else:
                     # this point was already selected, allow it to be dragged to a new position
-                    self.select_marker(point, True)
+                    self.select_marker(mkr, True)
 
-                # FIXME: during testing and dev
+                # DEBUG:
                 # print(f"_scatter_mouse_press: {point}")
 
-        # if point is not already selected, select it and set dragging mode to true
 
-        # if point is already selected, just set dragging mode to true
+
 
     # def _scatter_mouse_release(self, event):
     #     """
@@ -1508,7 +1530,7 @@ class Viewport(QWidget):
     #     :param event:
     #     :return:
     #     """
-    #     # FIXME: during testing and dev
+    #     # DEBUG:
     #     print("_scatter_mouse_release")
     #
     #     self.drag_point_mode = False
@@ -1521,7 +1543,7 @@ class Viewport(QWidget):
     #     :param scatter: The ScatterPlotItem object. (not used)
     #     :param clicked_points: The list of clicked points (contains instances of Point).
     #     """
-    #     # FIXME: during testing and dev
+    #     # DEBUG:
     #     print("_point_clicked")
     #
     #     if not clicked_points:
@@ -1568,9 +1590,9 @@ class Viewport(QWidget):
     #     Handle point pressed event.
     #     """
     #
-    #     if self.point_im is not None and self.point_im.matches_event(event):
+    #     if self.mark_im is not None and self.mark_im.matches_event(event):
     #         # only respond to the event if the interaction method matches (for example, shift + left click)
-    #         # FIXME: during testing and dev
+    #         # DEBUG:
     #         print("point pressed")
     #
     #         if self.add_point_mode:
@@ -1588,7 +1610,7 @@ class Viewport(QWidget):
     #             self.set_selected(clicked_point)
     #
     #
-    #         # FIXME: during testing and dev
+    #         # DEBUG:
     #         print(f"point clicked at position: {clicked_point.x}, {clicked_point.y}, Slice index: {clicked_point.z}")
     #
     #         self.drag_point_mode = True
