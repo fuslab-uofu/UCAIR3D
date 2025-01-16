@@ -61,14 +61,14 @@ class Viewport(QWidget):
     A viewport is a subclass of QWidget and can be added to a layout in a QMainWindow.
     """
     # signals to notify parent class of changes in the viewport
-    point_added_signal = pyqtSignal(object, object, object)
+    marker_added_signal = pyqtSignal(object, object, object)
     point_selected_signal = pyqtSignal(object, object, object)
     points_cleared_signal = pyqtSignal(object)
     point_moved_signal = pyqtSignal(object, object, object)
     slice_changed_signal = pyqtSignal(object, object)
 
 
-    def __init__(self, parent, _id, _view_dir, _num_vols, _paint_method=None, _erase_method=None, _point_method=None,
+    def __init__(self, parent, _id, _view_dir, _num_vols, _paint_method=None, _erase_method=None, _mark_method=None,
                  _zoom_method=None, _pan_method=None, _window_method=None, _alpha_blending=False):
         super().__init__()
 
@@ -83,7 +83,7 @@ class Viewport(QWidget):
         #   zooming, panning, and windowing)panning, and windowing)
         self.paint_im = _paint_method  # method for painting
         self.erase_im = _erase_method  # method for erasing
-        self.mark_im = _point_method  # method for making points
+        self.mark_im = _mark_method  # method for making points
         self.zoom_im = _zoom_method  # TODO: future implementation, custom zoom method
         self.pan_im = _pan_method  # TODO: future implementation, custom pan method
         self.window_im = _window_method  # TODO: future implementation, custom method for windowing
@@ -93,9 +93,9 @@ class Viewport(QWidget):
         self.alpha_blending = _alpha_blending
 
         # interactive point placement
-        self.add_point_mode = False  # if adding points, are we placing a new point?
-        self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
-        self.drag_point_mode = False  # are we dragging a point to a new location?
+        self.add_marker_mode = False  # if adding points, are we placing a new point?
+        # self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
+        self.drag_marker_mode = False  # are we dragging a point to a new location?
         self.edit_marker_mode = False  # are we editing the location of a point?
         self.point_moved = False
         self.points = []  # this will be a list of point objects?
@@ -379,8 +379,8 @@ class Viewport(QWidget):
     # markers ----------------------------------------------------------------------------------------------------------
     def add_marker(self, image_col, image_row, image_slice, image_index, new_id=None):
         """
-        Add a marker at the specified plot coordinates. The marker is added to the list of markers for the current
-        slice, but is not plotted until _update_markers_display() is called.
+        Add a marker at the specified image3D voxel coordinates. The marker is added to the list of markers for the
+        current slice, but is not plotted until _update_markers_display() is called.
 
         :param image_col: int
         :param image_row: int
@@ -497,10 +497,15 @@ class Viewport(QWidget):
 
     def set_add_marker_mode(self, _is_adding):
         """Can be called by external class to toggle add_marker mode."""
-        self.add_point_mode = _is_adding
+        self.add_marker_mode = _is_adding
 
-    def set_pending_marker_mode(self, _pending):
-        self.pending_point_mode = _pending
+    # def set_pending_marker_mode(self, _pending):
+    #     self.pending_point_mode = _pending
+
+    def set_edit_marker_mode(self, _editing):
+        """Can be called by external class to toggle edit_marker mode."""
+        self.edit_marker_mode = _editing
+
 
     def clear_markers(self):
         """Remove all points from the image view."""
@@ -1168,7 +1173,7 @@ class Viewport(QWidget):
                 self.interaction_state = 'erasing'
                 self._mouse_move(event)
             elif self.mark_im is not None and self.mark_im.matches_event(event):
-                if self.add_point_mode:  # adding point
+                if self.add_marker_mode:  # adding point
                     plot_x = int(plot_xy.x())
                     plot_y = int(plot_xy.y())
                     # DEBUG:
@@ -1187,16 +1192,16 @@ class Viewport(QWidget):
                             if new_point is not None:
                                 # set this new point as the selected point
                                 self.select_marker(new_point, False)
-                                self.drag_point_mode = True  # user can drag the point to new position before mouse release
+                                self.drag_marker_mode = True  # user can drag the point to new position before mouse release
                                 # update points display
                                 self._update_markers_display()
                                 # emit point created signal
-                                self.point_added_signal.emit(new_point, self.id, self.view_dir)
+                                self.marker_added_signal.emit(new_point, self.id, self.view_dir)
                             else:
                                 # pass the event back to pyqtgraph for any further processing
                                 self.original_mouse_press(event)
                 else:
-                    if len(self.scatter.pointsAt(plot_xy)) == 0:
+                    if len(self.scatter.pointsAt(plot_xy)) == 0 and not self.edit_marker_mode:
                         # clicked in the plot, but not on a point. Deselect any selected points
                         self.clear_selected_markers()
 
@@ -1221,6 +1226,7 @@ class Viewport(QWidget):
 
         # DEBUG:
         # print(f"Scene coordinates: {scene_xy_qpoint}")
+        # print(f"drag mode: {self.drag_marker_mode}")
 
         if self.background_image_index is None or self.image3D_obj_stack[self.background_image_index] is None:
             # nothing to do
@@ -1268,6 +1274,8 @@ class Viewport(QWidget):
 
             # DEBUG:
             # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+            # print(f"interaction state: {self.interaction_state}")
+            # print(self.mark_im)
 
             # update the coordinates label
             coordinates_text = "col:{:3d}, row:{:3d}, slice:{:3d}".format(image_crs[0], image_crs[1], image_crs[2])
@@ -1277,28 +1285,37 @@ class Viewport(QWidget):
             self.coordinates_label.setText(coordinates_text)
 
             # if painting, erasing, or dragging point
-            # print(f"draging point mode: {self.drag_point_mode}, current point: {self.current_point}")
+            # print(f"dragging point mode: {self.drag_marker_mode}, current point: {self.current_point}")
             if self.interaction_state == 'painting':
                 self._apply_brush(plot_x, plot_y, True)
             elif self.interaction_state == 'erasing':
                 self._apply_brush(plot_x, plot_y, False)
-            elif self.drag_point_mode and self.selected_point is not None:  # FIXME: need to check mark_im?
-                # dragging point
-                self.point_moved = True
-                # DEBUG:
-                # print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
-                # print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
-                self.selected_point['plot_x'] = plot_x
-                self.selected_point['plot_y'] = plot_y
-                self.selected_point['image_col'] = image_crs[0]  # voxel index into the Image3D object
-                self.selected_point['image_row'] = image_crs[1]  # voxel index into the Image3D object
-                self.selected_point['image_slice'] = image_crs[2]  # voxel index into the Image3D object
+            elif self.drag_marker_mode:
 
-                # update the ScatterPlotItem to reflect the new position
-                self._update_markers_display()
                 # DEBUG:
-                # print(self.selected_point)
-                self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
+                # print("dragging marker")
+
+                if self.selected_point is not None:
+                    # dragging point
+                    self.point_moved = True
+
+                    # DEBUG:
+                    # print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
+                    # print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
+
+                    self.selected_point['plot_x'] = plot_x
+                    self.selected_point['plot_y'] = plot_y
+                    self.selected_point['image_col'] = image_crs[0]  # voxel index into the Image3D object
+                    self.selected_point['image_row'] = image_crs[1]  # voxel index into the Image3D object
+                    self.selected_point['image_slice'] = image_crs[2]  # voxel index into the Image3D object
+
+                    # update the ScatterPlotItem to reflect the new position
+                    self._update_markers_display()
+
+                    # DEBUG:
+                    # print(self.selected_point)
+
+                    self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
             else:
                 # probably panning - pass the event back to pyqtgraph for any further processing
                 self.original_mouse_move(event)
@@ -1316,7 +1333,7 @@ class Viewport(QWidget):
         # print("_mouse_release")
 
         self.interaction_state = None
-        self.drag_point_mode = False
+        self.drag_marker_mode = False
 
         # notify parent that point was moved
         # if self.selected_point is not None and self.point_moved:
@@ -1511,15 +1528,15 @@ class Viewport(QWidget):
             # only respond to the event if the interaction method matches (for example, shift + left click)
             if mkr is not None:
                 if mkr.get('is_selected'):  # and self.edit_marker_mode:
-                    self.drag_point_mode = True
-                    # DEBUG:
-                    print(f'Marker picked: {self.drag_point_mode}')
+                    self.drag_marker_mode = True
                 else:
-                    # this point was already selected, allow it to be dragged to a new position
-                    self.select_marker(mkr, True)
+                    if not self.edit_marker_mode:
+                        self.select_marker(mkr, True)
+                    else:
+                        self.drag_marker_mode = True
+                        # DEBUG:
+                        print(f'Drag edit marker')
 
-                # DEBUG:
-                # print(f"_scatter_mouse_press: {point}")
 
 
 
@@ -1533,7 +1550,7 @@ class Viewport(QWidget):
     #     # DEBUG:
     #     print("_scatter_mouse_release")
     #
-    #     self.drag_point_mode = False
+    #     self.drag_marker_mode = False
 
 
     # def _point_clicked(self, scatter, clicked_points):
@@ -1595,12 +1612,12 @@ class Viewport(QWidget):
     #         # DEBUG:
     #         print("point pressed")
     #
-    #         if self.add_point_mode:
+    #         if self.add_marker_mode:
     #             return
     #
     #         if self.pending_point_mode:
     #             # if the point is in pending mode, then the point is being dragged to a new position
-    #             self.drag_point_mode = True
+    #             self.drag_marker_mode = True
     #         else:
     #             # FIXME: need to handle case where multiple points are stacked on top of each other
     #             # if len(stacked_points) > 0:
@@ -1613,7 +1630,7 @@ class Viewport(QWidget):
     #         # DEBUG:
     #         print(f"point clicked at position: {clicked_point.x}, {clicked_point.y}, Slice index: {clicked_point.z}")
     #
-    #         self.drag_point_mode = True
+    #         self.drag_marker_mode = True
     #
     #         # emit signal to notify the parent class that a point was clicked
     #         # TODO
