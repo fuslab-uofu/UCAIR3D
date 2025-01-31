@@ -55,10 +55,12 @@ class Image3D:
         self.y_dir = None
         self.z_dir = None
 
+        self.origin = None
+        self.resolution = None
+        self.shape = None
+
         self.visible = True
 
-        # dictionary to store the 'geometry' of the volume. Convenient for comparing image shape, resolution, origin.
-        self.geometry = {}
 
     # def populate(self, dataset, dataset_type, dataset_name):
     #     """
@@ -145,7 +147,10 @@ class Image3D:
         self.data_min = np.min(self.data)
         self.data_max = np.max(self.data)
 
-        self.geometry = {'shape' : self.data.shape, 'spacing' : [self.dx, self.dy, self.dz], 'origin' : self.transform[:3, 3]}
+        # self.geometry = {'shape' : self.data.shape, 'spacing' : [self.dx, self.dy, self.dz], 'origin' : self.transform[:3, 3]}
+        self.origin = [self.transform[:3, 3][0], self.transform[:3, 3][1], self.transform[:3, 3][2]]
+        self.resolution = [self.dx, self.dy, self.dz]
+        self.shape = [self.data.shape[0], self.data.shape[1], self.data.shape[2]]
 
     def get_slice(self, view, slice_num):
         """

@@ -3,7 +3,7 @@ import pyqtgraph as pg
 import re
 import shortuuid
 
-from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider, QComboBox
+from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider, QComboBox, QFrame
 from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt, pyqtSignal
 
@@ -61,7 +61,7 @@ class Viewport(QWidget):
     A viewport is a subclass of QWidget and can be added to a layout in a QMainWindow.
     """
     # signals to notify parent class of changes in the viewport
-    marker_added_signal = pyqtSignal(object, object, object)
+    marker_added_signal = pyqtSignal(object, object)
     point_selected_signal = pyqtSignal(object, object, object)
     points_cleared_signal = pyqtSignal(object)
     point_moved_signal = pyqtSignal(object, object, object)
@@ -132,20 +132,23 @@ class Viewport(QWidget):
         # the main layout for this widget ----------
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setSpacing(1)
 
         # horizontal layout for the coordinates label and tool buttons ----------
-        top_layout = QHBoxLayout()
+        coords_frame = QFrame()
+        coords_frame.setLayout(QHBoxLayout())
+        coords_frame.layout().setContentsMargins(0, 0, 0, 0)
+        coords_frame.setStyleSheet("background-color: #000000;")
         # coordinates label
         self.coordinates_label = QLabel("", self)
         font = QFont("Segoe UI", 9)
         font.setItalic(True)
         self.coordinates_label.setFont(font)
         # self.coordinates_label.setAlignment(Qt.AlignVCenter)
-        top_layout.addWidget(self.coordinates_label)
+        coords_frame.layout().addWidget(self.coordinates_label)
 
         # add spacing between the buttons and right edge
-        top_layout.addStretch()
+        # coords_frame.addStretch()
         # histogram visibility button
         # self.histogram_button = QPushButton()
         # self.histogram_button.setCheckable(True)
@@ -154,10 +157,10 @@ class Viewport(QWidget):
         # histogram_icon = QIcon("..\\ui\\colorWheelIcon.svg")
         # self.histogram_button.setIcon(histogram_icon)
         # self.histogram_button.clicked.connect(self._toggle_histogram)
-        # top_layout.addWidget(self.histogram_button)
+        # coords_frame.addWidget(self.histogram_button)
 
         # add the top layout to the main layout (above the imageView)
-        main_layout.addLayout(top_layout)
+        main_layout.addWidget(coords_frame)
 
         # layout for the image view and opacity slider ----------
         image_view_layout = QHBoxLayout()
@@ -179,7 +182,7 @@ class Viewport(QWidget):
         # create lines for slice intersection guides
         self.axial_line_color = 'r'
         self.sag_line_color = 'y'
-        self.cor_line_color = 'g'
+        self.cor_line_color = '#447CF9'
         self.slice_line_width = 0.5
         self.horizontal_line = pg.InfiniteLine(angle=0, pen=pg.mkPen('r', width=self.slice_line_width), movable=False)
         self.vertical_line = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=self.slice_line_width), movable=False)
@@ -1196,7 +1199,7 @@ class Viewport(QWidget):
                                 # update points display
                                 self._update_markers_display()
                                 # emit point created signal
-                                self.marker_added_signal.emit(new_point, self.id, self.view_dir)
+                                self.marker_added_signal.emit(new_point, self.id)
                             else:
                                 # pass the event back to pyqtgraph for any further processing
                                 self.original_mouse_press(event)
