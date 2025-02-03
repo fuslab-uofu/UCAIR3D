@@ -3,15 +3,12 @@ import pyqtgraph as pg
 import re
 import shortuuid
 
-from PyQt5.QtWidgets import QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLabel, QSlider, QComboBox, QFrame
-from PyQt5.QtGui import QIcon, QFont
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtWidgets import QVBoxLayout, QWidget, QHBoxLayout, QLabel, QFrame
+from PyQt5.QtGui import QFont
+from PyQt5.QtCore import pyqtSignal
 
 from enumerations import ViewDir
 from paint_brush import PaintBrush
-from interaction_method import InteractionMethod
-
-from pyqtgraph import ScatterPlotItem
 
 
 class CustomScatterPlotItem(pg.ScatterPlotItem):
