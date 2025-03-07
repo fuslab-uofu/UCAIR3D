@@ -1,0 +1,38 @@
+#{button_name} {
+    color: #EFF0F1;
+    background-color: #31363B;
+    border-style: outset;
+    border-width: 2px;
+    border-color: #31363B;
+    border-radius: 0.23em;
+    outline: none;
+}
+
+#{button_name}:hover {
+	border-width: 0.02em;
+    border-color: white;
+}
+
+#{button_name}:disabled {
+    background-color:  #31363B;
+    border-width: 0.04em;
+    border-color:  #444647;
+    border-style: solid;
+    padding-top: 0.23em;
+    padding-bottom: 0.23em;
+    padding-left: 1ex;
+    padding-right: 1ex;
+    border-radius: 0.23em;
+    color:  #454545;
+}
+
+#{button_name}:checked {
+    border-style: inset;
+	border-width: 0.04em;
+	background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #454545, stop:1 #31363B);
+}
+
+#{button_name}:checked:hover {
+    border-color: white;
+	border-width: 0.02em;
+}
