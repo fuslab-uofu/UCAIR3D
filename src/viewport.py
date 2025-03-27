@@ -115,7 +115,8 @@ class Viewport(QWidget):
         self.background_image_index = None
         # keep track of the active layer for histogram, colormap, and opacity settings interaction
         self.active_image_index = 0  # default to the first layer (background)
-        self.canvas_layers = []  # the layers that are currently being painted on
+        self.canvas_layer = None     # the image that is currently being painted on
+        self.canvas_labels = []      # the labels (in the canvas_layer) that are currently being painted on
         self.point_layer_index = None  # the layer that points are currently being added to
         self.current_slice_index = 0
 
@@ -164,6 +165,14 @@ class Viewport(QWidget):
         image_view_layout = QHBoxLayout()
         # the image view widget ----------
         self.image_view = pg.ImageView()
+        # access the PlotItem under the time slider
+        plot_item = self.image_view.ui.roiPlot  # This is the plot below the image for z/time slider
+        # access the bottom axis
+        axis = plot_item.getAxis('bottom')
+        # change font size
+        font = QFont()
+        font.setPointSize(8)  # Set to desired font size
+        axis.setTickFont(font)
 
         # FIXME: testing
         # self.image_view.setFocusPolicy(Qt.ClickFocus)
@@ -344,8 +353,8 @@ class Viewport(QWidget):
         self.array3D_stack[stack_position] = None
         # self.array2D_stack[stack_position].clear()
         self.array2D_stack[stack_position] = None
-        if stack_position in self.canvas_layers:
-            self.remove_canvas_layer(stack_position)
+        if stack_position in self.canvas_layer:
+            self.clear_canvas_layer(stack_position)
         self.refresh()
 
     def hide_layer(self, stack_position):
@@ -522,7 +531,7 @@ class Viewport(QWidget):
     #     if self.image3D_obj_stack[which_layer] is None:
     #         # TODO: raise an error or warning - no layer selected
     #         return
-    #     self.canvas_layers = which_layer
+    #     self.canvas_layer = which_layer
     #     self.is_painting = _is_painting
     #
     #     if self.is_painting:
@@ -531,31 +540,42 @@ class Viewport(QWidget):
     #         self.setCursor(QCursor(Qt.CrossCursor))
     #     else:
     #         # disable painting on this layer
-    #         self._disable_paint_brush(self.canvas_layers)
+    #         self._disable_paint_brush(self.canvas_layer)
     #         self.setCursor(QCursor(Qt.ArrowCursor))
 
-    def remove_canvas_layer(self, _layer_idx):
+    def clear_canvas_layer(self, _layer_idx):
         """ Remove this layer index from the list of canvas layers."""
-        if _layer_idx in self.canvas_layers:
-            self.canvas_layers.remove(_layer_idx)
+        if _layer_idx in self.canvas_layer:
+            self.canvas_layer.remove(_layer_idx)
+    
+    def remove_canvas_label(self, _label_id):
+        """ Remove this label id from the list of labels that are being painted on the canvas layer."""
+        if _label_id in self.canvas_labels:
+            self.canvas_labels.remove(_label_id)
 
-    def add_canvas_layer(self, _layer_idx):
-        """ Add this layer index to the list of canvas layers."""
-        if _layer_idx not in self.canvas_layers:
-            self.canvas_layers.append(_layer_idx)
+    def set_canvas_layer(self, _layer_idx):
+        """ Add this layer index to the list of canvas layers. The canvas layer is the image that is being painted on."""
+        self.canvas_layer = _layer_idx
 
+    def add_canvas_label(self, _label_id):
+        """ Add this label id to the list of labels that are being painted on the canvas layer."""
+        if _label_id not in self.canvas_labels:
+            self.canvas_labels.append(_label_id)
+            
     def update_paint_brush(self, brush):
         """Update the paint brush settings. Called by external class to update the paint brush settings,
         applies updated brush to current paint layer, if is_painting."""
         self.paint_brush.set_size(brush.size)
-        self.paint_brush.set_value(brush.value)
+        self.paint_brush.set_value(brush.value)  # label id
         self.paint_brush.set_shape(brush.shape)
 
-        # if self.canvas_layers is None:
+        # if self.canvas_layer is None:
         #     return
         # if self.is_painting:
         #     self._update_canvas()
 
+    def set_paint_brush_label(self, _label_id):
+        self.paint_brush.set_value(_label_id)
     # def blend_background_with_layer(self, bg_pct, layer_idx, layer_pct):
     #     """
     #     Blend the current slice of the background image with the current slice of the image specified by layer_idx.
@@ -601,7 +621,7 @@ class Viewport(QWidget):
 
     # def set_canvas_layer(self, index):
     #     """Set the canvas layer for painting."""
-    #     self.canvas_layers = index
+    #     self.canvas_layer = index
 
     def plotdatacr_to_plotxy(self, plot_data_col, plot_data_row):
         """
@@ -1351,8 +1371,8 @@ class Viewport(QWidget):
 
     def _update_canvas(self):
         """Update the canvas for painting. Masks the painting area using allowed values."""
-        if self.image3D_obj_stack[self.canvas_layers] is None or self.array3D_stack[
-            self.canvas_layers] is None:
+        if self.image3D_obj_stack[self.canvas_layer] is None or self.array3D_stack[
+            self.canvas_layer] is None:
             # FIXME: raise an error or warning?
             return
 
@@ -1361,7 +1381,7 @@ class Viewport(QWidget):
             self.imageItem2D_canvas.clear()
 
         # mask the paint image to create a canvas for painting
-        paint_image_object = self.image3D_obj_stack[self.canvas_layers]
+        paint_image_object = self.image3D_obj_stack[self.canvas_layer]
         if hasattr(paint_image_object, 'get_canvas_labels'):
             allowed_values = np.array(paint_image_object.get_canvas_labels())  # , dtype=canvas_slice.dtype.type
             if allowed_values is None:
@@ -1370,10 +1390,10 @@ class Viewport(QWidget):
             paint_value = self.paint_brush.get_value()  # canvas_slice.dtype.type(
 
             # get the current slice of the paint image
-            if self.canvas_layers == self.background_image_index:
+            if self.canvas_layer == self.background_image_index:
                 paint_image_slice = self.image_view.getImageItem().image
             else:
-                paint_image_slice = self.array2D_stack[self.canvas_layers].image
+                paint_image_slice = self.array2D_stack[self.canvas_layer].image
 
             colors = [
                 (255, 255, 255, 0),  # white for 0
@@ -1410,7 +1430,7 @@ class Viewport(QWidget):
     #     else:
     #         canvas_image = self.array2D_stack[which_layer]
     #
-    #     self.canvas_layers = which_layer
+    #     self.canvas_layer = which_layer
     #     self._update_canvas()
     #
     # def _disable_paint_brush(self, which_layer):
@@ -1432,11 +1452,11 @@ class Viewport(QWidget):
         """
         # this method written by Kazem (thank you!)
 
-        if self.canvas_layers is None:
+        if self.canvas_layer is None:
             # FIXME: notify user that no layer is selected for painting?
             return
 
-        data = self.array3D_stack[self.canvas_layers]
+        data = self.array3D_stack[self.canvas_layer]
         data_slice = data[int(self.image_view.currentIndex), :, :]  # arrays have been transposed
 
         # Define the range for the brush area
@@ -1449,7 +1469,7 @@ class Viewport(QWidget):
         # Create a mask for the brush area within the bounds of data
         brush_area = data_slice[x_start:x_end, y_start:y_end]
 
-        paint_image_object = self.image3D_obj_stack[self.canvas_layers]
+        paint_image_object = self.image3D_obj_stack[self.canvas_layer]
         if not hasattr(paint_image_object, 'get_canvas_labels'):
             # FIXME: raise an error or warning?
             return
@@ -1471,10 +1491,10 @@ class Viewport(QWidget):
         # update the appropriate ImageView ImageItem
         # preserve the current zoom and pan state, prevents image from resetting to full extent
         view_range = self.image_view.view.viewRange()
-        if self.canvas_layers == self.background_image_index:
+        if self.canvas_layer == self.background_image_index:
             self.image_view.setImage(data)
         else:
-            self.array2D_stack[self.canvas_layers].setImage(data_slice)
+            self.array2D_stack[self.canvas_layer].setImage(data_slice)
         self.image_view.view.setRange(xRange=view_range[0], yRange=view_range[1],
                                       padding=0)
         # try:
