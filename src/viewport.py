@@ -5,11 +5,43 @@ import shortuuid
 
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QHBoxLayout, QLabel, QFrame
 from PyQt5.QtGui import QFont, QPainter, QImage
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, QObject, QEvent
 from PyQt5.QtSvg import QSvgGenerator
 
 from enumerations import ViewDir
 from paint_brush import PaintBrush
+
+
+class WheelEventFilter(QObject):
+    def __init__(self, imageView):
+        super().__init__()
+        self.iv = imageView
+
+    def eventFilter(self, obj, event):
+        print(event.type(), QEvent.Wheel)
+        if event.type() == QEvent.Wheel:
+            # Get the current value of the time slider
+            current_value = self.iv.timeLine.value()
+            # Determine the direction of the scroll
+            delta = event.angleDelta().y()
+            # Update the slider value based on the scroll direction
+            if delta > 0:
+                new_value = current_value + 1
+            else:
+                new_value = current_value - 1
+            # Ensure the new value is within the slider's range
+            new_value = max(0, min(new_value, self.iv.timeLine.maximum()))
+            # Set the new value to the time slider
+            self.iv.timeLine.setValue(new_value)
+            return True
+        return False
+
+
+class CustomImageView(pg.ImageView):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.wheelEventFilter = WheelEventFilter(self)
+        self.installEventFilter(self.wheelEventFilter)
 
 
 class CustomScatterPlotItem(pg.ScatterPlotItem):
@@ -60,64 +92,66 @@ class Viewport(QWidget):
     """
     # signals to notify parent class of changes in the viewport
     marker_added_signal = pyqtSignal(object, object)
-    point_selected_signal = pyqtSignal(object, object, object)
-    points_cleared_signal = pyqtSignal(object)
-    point_moved_signal = pyqtSignal(object, object, object)
+    marker_selected_signal = pyqtSignal(object, object, object)
+    markers_cleared_signal = pyqtSignal(object)
+    marker_moved_signal = pyqtSignal(object, object, object)
     slice_changed_signal = pyqtSignal(object, object)
 
-
-    def __init__(self, parent, _id, _view_dir, _num_vols, _paint_method=None, _erase_method=None, _mark_method=None,
-                 _zoom_method=None, _pan_method=None, _window_method=None, _alpha_blending=False):
+    def __init__(self,
+                 parent,
+                 vp_id,
+                 view_dir,
+                 num_vols,
+                 paint_method=None,
+                 erase_method=None,
+                 mark_method=None,
+                 zoom_method=None,
+                 pan_method=None,
+                 window_method=None):
         super().__init__()
 
         self.parent = parent
-        self.id = _id
-        self.view_dir = _view_dir.dir  # ViewDir.AX (axial), ViewDir.COR (coronal), ViewDir.SAG (sagittal)
-        self.num_vols_allowed = _num_vols  # number of images (layers) to display
-        # self.num_vols = 0  # keep track of the number of images currently linked to this viewport
-        # self.num_displayed_images = 0  # FIXME: might not be necessary?
+        self.id = vp_id
+        self.view_dir = view_dir.dir  # ViewDir.AX (axial), ViewDir.COR (coronal), ViewDir.SAG (sagittal)
+        self.num_vols_allowed = num_vols  # number of images (layers) to display
 
-        # parent can provide custom methods for interacting with the viewport (e.g., painting, erasing, pointing,
-        #   zooming, panning, and windowing)panning, and windowing)
-        self.paint_im = _paint_method  # method for painting
-        self.erase_im = _erase_method  # method for erasing
-        self.mark_im = _mark_method  # method for making points
-        self.zoom_im = _zoom_method  # TODO: future implementation, custom zoom method
-        self.pan_im = _pan_method  # TODO: future implementation, custom pan method
-        self.window_im = _window_method  # TODO: future implementation, custom method for windowing
+        # parent can provide custom methods for interacting with the viewport (e.g., painting, erasing, marking,
+        #   zooming, panning, and windowing)
+        self.paint_im = paint_method  # method for painting
+        self.erase_im = erase_method  # method for erasing
+        self.mark_im = mark_method  # method for making points
+        self.zoom_im = zoom_method  # TODO: future implementation, custom zoom method
+        self.pan_im = pan_method  # TODO: future implementation, custom pan method
+        self.window_im = window_method  # TODO: future implementation, custom method for windowing
         self.interaction_state = None  # implemented values: 'painting', 'erasing'
-
-        # alpha blending is special case where...
-        self.alpha_blending = _alpha_blending
 
         # interactive point placement
         self.add_marker_mode = False  # if adding points, are we placing a new point?
         # self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
         self.drag_marker_mode = False  # are we dragging a point to a new location?
         self.edit_marker_mode = False  # are we editing the location of a point?
-        self.point_moved = False
-        self.points = []  # this will be a list of point objects?
-        self.selected_point = None
+        self.marker_moved = False
+        self.selected_marker = None
         # default colors for points TODO: let parent class update these
-        self.idle_point_color = (255, 0, 0, 255)  # red
-        self.selected_point_color = (0, 255, 0, 255)  # green
-        self.temp_point_color = (255, 255, 0, 255) # yellow
-        self.idle_pen = pg.mkPen(self.idle_point_color, width=1)  # red pen for not idle points
-        self.idle_brush = pg.mkBrush(self.idle_point_color)
-        self.selected_pen = pg.mkPen(self.selected_point_color, width=2)  # green pen for selected point
-        self.selected_brush = pg.mkBrush(self.selected_point_color)
-        self.temp_pen = pg.mkPen(self.temp_point_color, width=1)  # yellow pen for temporary point
-        self.temp_brush = pg.mkBrush(self.temp_point_color)
+        self.idle_marker_color = (255, 0, 0, 255)  # red
+        self.selected_marker_color = (0, 255, 0, 255)  # green
+        self.temp_marker_color = (255, 255, 0, 255) # yellow
+        self.idle_pen = pg.mkPen(self.idle_marker_color, width=1)  # red pen for not idle points
+        self.idle_brush = pg.mkBrush(self.idle_marker_color)
+        self.selected_pen = pg.mkPen(self.selected_marker_color, width=2)  # green pen for selected point
+        self.selected_brush = pg.mkBrush(self.selected_marker_color)
+        self.temp_pen = pg.mkPen(self.temp_marker_color, width=1)  # yellow pen for temporary point
+        self.temp_brush = pg.mkBrush(self.temp_marker_color)
         # dictionary to store points for each slice
         self.slice_markers = {}
 
         # convenience reference to the background image item
         self.background_image_index = None
         # keep track of the active layer for histogram, colormap, and opacity settings interaction
-        self.active_image_index = 0  # default to the first layer (background)
-        self.canvas_layer = None     # the image that is currently being painted on
-        self.canvas_labels = []      # the labels (in the canvas_layer) that are currently being painted on
-        self.point_layer_index = None  # the layer that points are currently being added to
+        self.active_image_index = 0     # default to the first layer (background)
+        self.canvas_layer_index = None  # the layer index of the image that is currently being painted on
+        self.canvas_labels = []         # the labels that are affected by painting
+        self.marker_layer_index = None   # the layer that points are currently being added to
         self.current_slice_index = 0
 
         # interactive painting
@@ -165,6 +199,7 @@ class Viewport(QWidget):
         image_view_layout = QHBoxLayout()
         # the image view widget ----------
         self.image_view = pg.ImageView()
+        # self.image_view = CustomImageView()
         # access the PlotItem under the time slider
         plot_item = self.image_view.ui.roiPlot  # This is the plot below the image for z/time slider
         # access the bottom axis
@@ -258,9 +293,29 @@ class Viewport(QWidget):
         # when the timeLine position changes, update the overlays
         self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
+        self.graphics_scene = self.image_view.getView().scene()
+        self.graphics_scene.wheelEvent = self._wheel_event
+
     #  -----------------------------------------------------------------------------------------------------------------
     #  "Public" methods API --------------------------------------------------------------------------------------------
     #  -----------------------------------------------------------------------------------------------------------------
+
+    def _wheel_event(self, event):
+        print("Mouse wheel scrolled")
+        # Get the current value of the time slider
+        current_value = self.image_view.timeLine.value()
+        # Determine the direction of the scroll
+        delta = event.delta()
+        # Update the slider value based on the scroll direction
+        if delta > 0:
+            new_value = current_value + 1
+        else:
+            new_value = current_value - 1
+        # Ensure the new value is within the slider's range
+        new_value = max(0, min(new_value, self.image_view.timeLine.maxRange[1]))
+        # Set the new value to the time slider
+        self.image_view.timeLine.setValue(new_value)
+        event.accept()
 
     def add_layer(self, image, stack_position):
         """
@@ -346,16 +401,16 @@ class Viewport(QWidget):
                     self.current_slice_index = slice_index
                     self.refresh_preserve_extent()
 
-    def remove_layer(self, stack_position):
-        # FIXME: this wipes out the image3D object! That is not what we want to do
-        self.image3D_obj_stack[stack_position] = None
-
-        self.array3D_stack[stack_position] = None
-        # self.array2D_stack[stack_position].clear()
-        self.array2D_stack[stack_position] = None
-        if stack_position in self.canvas_layer:
-            self.clear_canvas_layer(stack_position)
-        self.refresh()
+    # def remove_layer(self, stack_position):
+    #     # FIXME: this wipes out the image3D object! That is not what we want to do
+    #     self.image3D_obj_stack[stack_position] = None
+    #
+    #     self.array3D_stack[stack_position] = None
+    #     # self.array2D_stack[stack_position].clear()
+    #     self.array2D_stack[stack_position] = None
+    #     if stack_position in self.canvas_layer_index:
+    #         self.clear_canvas_layer(stack_position)
+    #     self.refresh()
 
     def hide_layer(self, stack_position):
         if self.image3D_obj_stack[stack_position] is None:
@@ -401,7 +456,7 @@ class Viewport(QWidget):
         """
         new_marker = None
 
-        # FIXME: use the image specified by point_layer_index, not necessarily the background_image_index?
+        # FIXME: use the image specified by marker_layer_index, not necessarily the background_image_index?
         # img_item = self.image_view.getImageItem()  # the image item of the ImageView widget
         array3D = self.array3D_stack[image_index]  # 3D array of data, optionally transposed
         # image3D_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
@@ -451,11 +506,11 @@ class Viewport(QWidget):
         :return:
         """
         if mkr is not None:
-            if self.selected_point is not None:
+            if self.selected_marker is not None:
                 # deselect previously selected point
-                self.selected_point['is_selected'] = False
+                self.selected_marker['is_selected'] = False
             mkr['is_selected'] = True
-            self.selected_point = mkr
+            self.selected_marker = mkr
             plot_data_crs = self.imagecrs_to_plotdatacrs(mkr['image_col'], mkr['image_row'], mkr['image_slice'])
             if plot_data_crs is None:
                 return  # FIXME: how to handle?
@@ -464,7 +519,7 @@ class Viewport(QWidget):
             self.goto_slice(plot_data_crs[2])
             self.refresh_preserve_extent()
             if notify:
-                self.point_selected_signal.emit(mkr, self.id, self.view_dir)
+                self.marker_selected_signal.emit(mkr, self.id, self.view_dir)
 
     def find_marker_by_id(self, point_id):
         """
@@ -500,10 +555,10 @@ class Viewport(QWidget):
         for slice_idx, points in self.slice_markers.items():
             for pt in points:
                 pt['is_selected'] = False
-        self.selected_point = None
+        self.selected_marker = None
         self._update_markers_display()
         if notify:
-            self.points_cleared_signal.emit(self.id)
+            self.markers_cleared_signal.emit(self.id)
 
     def set_add_marker_mode(self, _is_adding):
         """Can be called by external class to toggle add_marker mode."""
@@ -519,9 +574,8 @@ class Viewport(QWidget):
 
     def clear_markers(self):
         """Remove all points from the image view."""
-        for point in self.points:
-            self.image_view.removeItem(point)
-        self.points.clear()
+        # TODO
+        pass
 
 
     # painting ---------------------------------------------------------------------------------------------------------
@@ -531,7 +585,7 @@ class Viewport(QWidget):
     #     if self.image3D_obj_stack[which_layer] is None:
     #         # TODO: raise an error or warning - no layer selected
     #         return
-    #     self.canvas_layer = which_layer
+    #     self.canvas_layer_index = which_layer
     #     self.is_painting = _is_painting
     #
     #     if self.is_painting:
@@ -540,22 +594,24 @@ class Viewport(QWidget):
     #         self.setCursor(QCursor(Qt.CrossCursor))
     #     else:
     #         # disable painting on this layer
-    #         self._disable_paint_brush(self.canvas_layer)
+    #         self._disable_paint_brush(self.canvas_layer_index)
     #         self.setCursor(QCursor(Qt.ArrowCursor))
 
-    def clear_canvas_layer(self, _layer_idx):
-        """ Remove this layer index from the list of canvas layers."""
-        if _layer_idx in self.canvas_layer:
-            self.canvas_layer.remove(_layer_idx)
+    # def clear_canvas_layer(self, _layer_idx):
+    #     """ Remove this layer index from the list of canvas layers."""
+    #     if _layer_idx in self.canvas_layer_index:
+    #         self.canvas_layer_index.remove(_layer_idx)
     
     def remove_canvas_label(self, _label_id):
-        """ Remove this label id from the list of labels that are being painted on the canvas layer."""
+        """ Remove this label id from the list of labels that are allowed to be affected by painting."""
         if _label_id in self.canvas_labels:
             self.canvas_labels.remove(_label_id)
 
-    def set_canvas_layer(self, _layer_idx):
+    def set_canvas_layer_index(self, _layer_idx):
         """ Add this layer index to the list of canvas layers. The canvas layer is the image that is being painted on."""
-        self.canvas_layer = _layer_idx
+        if _layer_idx < self.num_vols_allowed:
+            self.canvas_layer_index = _layer_idx
+        #TODO: warn or log
 
     def add_canvas_label(self, _label_id):
         """ Add this label id to the list of labels that are being painted on the canvas layer."""
@@ -568,11 +624,6 @@ class Viewport(QWidget):
         self.paint_brush.set_size(brush.size)
         self.paint_brush.set_value(brush.value)  # label id
         self.paint_brush.set_shape(brush.shape)
-
-        # if self.canvas_layer is None:
-        #     return
-        # if self.is_painting:
-        #     self._update_canvas()
 
     def set_paint_brush_label(self, _label_id):
         self.paint_brush.set_value(_label_id)
@@ -618,10 +669,6 @@ class Viewport(QWidget):
     #     # layer_image_item.setImage(background_rgb)
     #     # self.image_view.show()
     #     # self.refresh_preserve_extent()
-
-    # def set_canvas_layer(self, index):
-    #     """Set the canvas layer for painting."""
-    #     self.canvas_layer = index
 
     def plotdatacr_to_plotxy(self, plot_data_col, plot_data_row):
         """
@@ -1170,7 +1217,6 @@ class Viewport(QWidget):
     #     self.opacity_slider.setVisible(not is_visible)
 
 
-
     def _mouse_press(self, event):
         """
         Capture mouse press event and handle painting and point-related actions before passing the event back to pyqtgraph.
@@ -1321,27 +1367,27 @@ class Viewport(QWidget):
                 # DEBUG:
                 # print("dragging marker")
 
-                if self.selected_point is not None:
+                if self.selected_marker is not None:
                     # dragging point
-                    self.point_moved = True
+                    self.marker_moved = True
 
                     # DEBUG:
                     # print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
                     # print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
 
-                    self.selected_point['plot_x'] = plot_x
-                    self.selected_point['plot_y'] = plot_y
-                    self.selected_point['image_col'] = image_crs[0]  # voxel index into the Image3D object
-                    self.selected_point['image_row'] = image_crs[1]  # voxel index into the Image3D object
-                    self.selected_point['image_slice'] = image_crs[2]  # voxel index into the Image3D object
+                    self.selected_marker['plot_x'] = plot_x
+                    self.selected_marker['plot_y'] = plot_y
+                    self.selected_marker['image_col'] = image_crs[0]  # voxel index into the Image3D object
+                    self.selected_marker['image_row'] = image_crs[1]  # voxel index into the Image3D object
+                    self.selected_marker['image_slice'] = image_crs[2]  # voxel index into the Image3D object
 
                     # update the ScatterPlotItem to reflect the new position
                     self._update_markers_display()
 
                     # DEBUG:
-                    # print(self.selected_point)
+                    # print(self.selected_marker)
 
-                    self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
+                    self.marker_moved_signal.emit(self.selected_marker, self.id, self.view_dir)
             else:
                 # probably panning - pass the event back to pyqtgraph for any further processing
                 self.original_mouse_move(event)
@@ -1362,63 +1408,63 @@ class Viewport(QWidget):
         self.drag_marker_mode = False
 
         # notify parent that point was moved
-        # if self.selected_point is not None and self.point_moved:
-        #     self.point_moved = False
-        #     self.point_moved_signal.emit(self.selected_point, self.id, self.view_dir)
+        # if self.selected_marker is not None and self.marker_moved:
+        #     self.marker_moved = False
+        #     self.marker_moved_signal.emit(self.selected_marker, self.id, self.view_dir)
 
         # pass event back to pyqtgraph for any further processing
         self.original_mouse_release(event)
 
-    def _update_canvas(self):
-        """Update the canvas for painting. Masks the painting area using allowed values."""
-        if self.image3D_obj_stack[self.canvas_layer] is None or self.array3D_stack[
-            self.canvas_layer] is None:
-            # FIXME: raise an error or warning?
-            return
-
-        if not self.is_painting:
-            # TODO APPLY the mask to the paint image
-            self.imageItem2D_canvas.clear()
-
-        # mask the paint image to create a canvas for painting
-        paint_image_object = self.image3D_obj_stack[self.canvas_layer]
-        if hasattr(paint_image_object, 'get_canvas_labels'):
-            allowed_values = np.array(paint_image_object.get_canvas_labels())  # , dtype=canvas_slice.dtype.type
-            if allowed_values is None:
-                return
-            # paint_value = self.paint_brush.get_value()  # Value to paint with
-            paint_value = self.paint_brush.get_value()  # canvas_slice.dtype.type(
-
-            # get the current slice of the paint image
-            if self.canvas_layer == self.background_image_index:
-                paint_image_slice = self.image_view.getImageItem().image
-            else:
-                paint_image_slice = self.array2D_stack[self.canvas_layer].image
-
-            colors = [
-                (255, 255, 255, 0),  # white for 0
-                (255, 0, 0, 255),  # red for 1
-                (0, 255, 0, 255),  # green for 2
-                (0, 0, 255, 255),  # blue for 3
-                (255, 255, 0, 255)  # yellow for 4
-            ]
-
-            # masked canvas: 0 where paint is allowed, -1 * paint_value where it’s not allowed
-            temp_mask = np.where(np.isin(paint_image_slice, allowed_values), 0, (-1 * paint_value))
-            self.imageItem2D_canvas.setImage(temp_mask)
-            # mask_lookup_table = paint_image_object.colormap
-            # # self.imageItem2D_canvas.setLookupTable(mask_lookup_table)
-            color_map = pg.ColorMap(pos=np.linspace(0, 1, 5), color=colors)
-            self.imageItem2D_canvas.setColorMap(color_map)
-            self.imageItem2D_canvas.setDrawKernel(self.paint_brush.kernel, mask=None, center=self.paint_brush.center,
-                                                  mode='add')
-
-            # FIXME: here, we need to fiddle with the colormap to make all but the paint_value transparent
-            # color_map = pg.ColorMap(pos=np.linspace(0, 1, 9), color=canvas_image_object.colormap)
-            # self.imageItem2D_canvas.setColorMap(color_map)
-
-            # self.imageItem2D_canvas.setDrawKernel(self.paint_brush.kernel, mask=None, center=self.paint_brush.center,
-            #                                    mode='add')
+    # def _update_canvas(self):
+    #     """Update the canvas for painting. Masks the painting area using allowed values."""
+    #     if self.image3D_obj_stack[self.canvas_layer_index] is None or self.array3D_stack[
+    #         self.canvas_layer_index] is None:
+    #         # FIXME: raise an error or warning?
+    #         return
+    #
+    #     if not self.is_painting:
+    #         # TODO APPLY the mask to the paint image
+    #         self.imageItem2D_canvas.clear()
+    #
+    #     # mask the paint image to create a canvas for painting
+    #     paint_image_object = self.image3D_obj_stack[self.canvas_layer_index]
+    #     if hasattr(paint_image_object, 'get_canvas_labels'):
+    #         allowed_values = np.array(paint_image_object.get_canvas_labels())  # , dtype=canvas_slice.dtype.type
+    #         if allowed_values is None:
+    #             return
+    #         # paint_value = self.paint_brush.get_value()  # Value to paint with
+    #         paint_value = self.paint_brush.get_value()  # canvas_slice.dtype.type(
+    #
+    #         # get the current slice of the paint image
+    #         if self.canvas_layer_index == self.background_image_index:
+    #             paint_image_slice = self.image_view.getImageItem().image
+    #         else:
+    #             paint_image_slice = self.array2D_stack[self.canvas_layer_index].image
+    #
+    #         colors = [
+    #             (255, 255, 255, 0),  # white for 0
+    #             (255, 0, 0, 255),  # red for 1
+    #             (0, 255, 0, 255),  # green for 2
+    #             (0, 0, 255, 255),  # blue for 3
+    #             (255, 255, 0, 255)  # yellow for 4
+    #         ]
+    #
+    #         # masked canvas: 0 where paint is allowed, -1 * paint_value where it’s not allowed
+    #         temp_mask = np.where(np.isin(paint_image_slice, allowed_values), 0, (-1 * paint_value))
+    #         self.imageItem2D_canvas.setImage(temp_mask)
+    #         # mask_lookup_table = paint_image_object.colormap
+    #         # # self.imageItem2D_canvas.setLookupTable(mask_lookup_table)
+    #         color_map = pg.ColorMap(pos=np.linspace(0, 1, 5), color=colors)
+    #         self.imageItem2D_canvas.setColorMap(color_map)
+    #         self.imageItem2D_canvas.setDrawKernel(self.paint_brush.kernel, mask=None, center=self.paint_brush.center,
+    #                                               mode='add')
+    #
+    #         # FIXME: here, we need to fiddle with the colormap to make all but the paint_value transparent
+    #         # color_map = pg.ColorMap(pos=np.linspace(0, 1, 9), color=canvas_image_object.colormap)
+    #         # self.imageItem2D_canvas.setColorMap(color_map)
+    #
+    #         # self.imageItem2D_canvas.setDrawKernel(self.paint_brush.kernel, mask=None, center=self.paint_brush.center,
+    #         #                                    mode='add')
 
 
     # def _enable_paint_brush(self, which_layer):
@@ -1430,7 +1476,7 @@ class Viewport(QWidget):
     #     else:
     #         canvas_image = self.array2D_stack[which_layer]
     #
-    #     self.canvas_layer = which_layer
+    #     self.canvas_layer_index = which_layer
     #     self._update_canvas()
     #
     # def _disable_paint_brush(self, which_layer):
@@ -1452,11 +1498,11 @@ class Viewport(QWidget):
         """
         # this method written by Kazem (thank you!)
 
-        if self.canvas_layer is None:
+        if self.canvas_layer_index is None:
             # FIXME: notify user that no layer is selected for painting?
             return
 
-        data = self.array3D_stack[self.canvas_layer]
+        data = self.array3D_stack[self.canvas_layer_index]
         data_slice = data[int(self.image_view.currentIndex), :, :]  # arrays have been transposed
 
         # Define the range for the brush area
@@ -1469,11 +1515,7 @@ class Viewport(QWidget):
         # Create a mask for the brush area within the bounds of data
         brush_area = data_slice[x_start:x_end, y_start:y_end]
 
-        paint_image_object = self.image3D_obj_stack[self.canvas_layer]
-        if not hasattr(paint_image_object, 'get_canvas_labels'):
-            # FIXME: raise an error or warning?
-            return
-        allowed_values = np.array(paint_image_object.get_canvas_labels())  # array of label values that can be painted
+        allowed_values = np.array(self.canvas_labels)  # array of label values that can be painted
         mask = np.isin(brush_area, allowed_values)
 
         # apply active label or 0 to canvas, depending on painting or erasing
@@ -1491,10 +1533,12 @@ class Viewport(QWidget):
         # update the appropriate ImageView ImageItem
         # preserve the current zoom and pan state, prevents image from resetting to full extent
         view_range = self.image_view.view.viewRange()
-        if self.canvas_layer == self.background_image_index:
+        if self.canvas_layer_index == self.background_image_index:
+            slice_index = int(self.image_view.currentIndex)
             self.image_view.setImage(data)
+            self.image_view.setCurrentIndex(slice_index)
         else:
-            self.array2D_stack[self.canvas_layer].setImage(data_slice)
+            self.array2D_stack[self.canvas_layer_index].setImage(data_slice)
         self.image_view.view.setRange(xRange=view_range[0], yRange=view_range[1],
                                       padding=0)
         # try:
@@ -1627,7 +1671,7 @@ class Viewport(QWidget):
     #         # update the display of points
     #         self._update_markers_display()
     #         # notify the parent class about the selected point
-    #         self.point_selected_signal.emit(point['id'], point['is_selected'], self.id, self.view_dir)
+    #         self.marker_selected_signal.emit(point['id'], point['is_selected'], self.id, self.view_dir)
 
     # def get_point_by_id_and_slice(self, point_id, slice_index):
     #     """
