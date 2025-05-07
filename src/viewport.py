@@ -301,7 +301,7 @@ class Viewport(QWidget):
     #  -----------------------------------------------------------------------------------------------------------------
 
     def _wheel_event(self, event):
-        print("Mouse wheel scrolled")
+        # print("Mouse wheel scrolled")
         # Get the current value of the time slider
         current_value = self.image_view.timeLine.value()
         # Determine the direction of the scroll
@@ -1037,14 +1037,31 @@ class Viewport(QWidget):
                     #     self.image_view.getView().addItem(scatter)
 
                     main_image = self.image_view.getImageItem()
-                    # Set the levels to prevent LUT rescaling based on the slice content
-                    main_image.setLevels([im_obj.display_min, im_obj.display_max])
-                    # apply the opacity of the Image3D object to the ImageItem
-                    main_image.setOpacity(im_obj.alpha)
-                    # FIXME: testing
-                    # print(f"{im_obj.file_base_name} opacity: {im_obj.alpha}")
 
-                    main_image.setColorMap(im_obj.colormap)
+                    if im_obj.clipping:
+                        # "clip" the image data to the display range (make vals outside range transparent)
+                        lo = im_obj.display_min
+                        hi = im_obj.display_max
+                        dmin = im_obj.data_min
+                        dmax = im_obj.data_max
+                        # compute normalized indices into [0…255]
+                        lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
+                        hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
+                        lut = im_obj.colormap.getLookupTable(
+                            start=0.0,  # maps to cm position 0.0
+                            stop=1.0,  # maps to cm position 1.0
+                            nPts=256,
+                            alpha=True  # include the alpha channel
+                        )
+                        lut[:lo_idx, 3] = 0  # below min → transparent
+                        lut[hi_idx:, 3] = 0  # above max → transparent
+                        main_image.setLookupTable(lut)
+                    else:
+                        # Set the levels to prevent LUT rescaling based on the slice content
+                        main_image.setLevels([im_obj.display_min, im_obj.display_max])
+                        # apply the opacity of the Image3D object to the ImageItem
+                        main_image.setOpacity(im_obj.alpha)
+                        main_image.setColorMap(im_obj.colormap)
 
                     # FIXME: correct? # radiological convention = RAS+ notation
                     #  (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
@@ -1141,20 +1158,39 @@ class Viewport(QWidget):
         if self.array3D_stack[layer_index] is not None:
             overlay_image_object = self.image3D_obj_stack[layer_index]
             overlay_data = self.array3D_stack[layer_index]
-            overlay_image_item = self.array2D_stack[layer_index]
+            image_item = self.array2D_stack[layer_index]
             if int(self.image_view.currentIndex) > overlay_data.shape[0]:
                 # the current slice index is out of bounds of the overlay data
-                overlay_image_item.setImage(None)
+                image_item.setImage(None)
             else:
                 overlay_slice = overlay_data[int(self.image_view.currentIndex)-1, :, :]
                 # apply the slice to the overlay ImageItem
-                overlay_image_item.setImage(overlay_slice)
-                # Set the levels to prevent LUT rescaling based on the slice content
-                overlay_image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
-                overlay_image_item.setOpacity(overlay_image_object.alpha)
-                # FIXME: testing
-                # print(f"{overlay_image_object.file_base_name} opacity: {overlay_image_object.alpha}")
-                overlay_image_item.setColorMap(overlay_image_object.colormap)
+                image_item.setImage(overlay_slice)
+
+                if overlay_image_object.clipping:
+                    # "clip" the image data to the display range (make vals outside range transparent)
+                    lo = overlay_image_object.display_min
+                    hi = overlay_image_object.display_max
+                    dmin = overlay_image_object.data_min
+                    dmax = overlay_image_object.data_max
+                    # compute normalized indices into [0…255]
+                    lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
+                    hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
+                    lut = overlay_image_object.colormap.getLookupTable(
+                        start=0.0,  # maps to cm position 0.0
+                        stop=1.0,  # maps to cm position 1.0
+                        nPts=256,
+                        alpha=True  # include the alpha channel
+                    )
+                    lut[:lo_idx, 3] = 0  # below min → transparent
+                    lut[hi_idx:, 3] = 0  # above max → transparent
+                    image_item.setLookupTable(lut)
+                else:
+                    # Set the levels to prevent LUT rescaling based on the slice content
+                    image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
+                    # apply the opacity of the Image3D object to the ImageItem
+                    image_item.setOpacity(overlay_image_object.alpha)
+                    image_item.setColorMap(overlay_image_object.colormap)
 
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""
@@ -1503,7 +1539,7 @@ class Viewport(QWidget):
             return
 
         data = self.array3D_stack[self.canvas_layer_index]
-        data_slice = data[int(self.image_view.currentIndex), :, :]  # arrays have been transposed
+        data_slice = data[int(self.image_view.currentIndex), :, :]  # arrays have been transposed - slice is first dim
 
         # Define the range for the brush area
         half_brush = self.paint_brush.get_size() // 2
@@ -1523,7 +1559,7 @@ class Viewport(QWidget):
             brush_area[mask] = self.paint_brush.get_value()
         else:
             # erasing
-            brush_area[mask] = 0
+            brush_area[mask] = 0  # assumes null value is 0
 
         # update only the modified slice in the 3D array
         # TODO: this is where we can implement an undo stack, saving changes to one slice at a time

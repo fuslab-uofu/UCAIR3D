@@ -756,7 +756,7 @@ QDialog QToolBar QToolButton[popupMode="2"]
 QPushButton
 {
     color: #eff0f1;
-	background-color: rgba(61, 173, 232, 0.1);
+    background-color: #31363b;
     border: 0.04em solid #76797c;
     padding: 0.23em;
     border-radius: 2px;

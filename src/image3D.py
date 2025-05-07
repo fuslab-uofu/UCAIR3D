@@ -103,17 +103,23 @@ class Image3D:
         """
         pass
 
-    def populate_with_nifti(self, nifti_image, full_path_name, base_name=None):
-        """ Populates the Image3D with data loaded from a NIfTI file using NiBabel.
+    def populate_with_nifti(self, nifti_image, full_path_name, base_name=None, settings_dict=None):
+        """
+        Populates the Image3D with data loaded from a NIfTI file using NiBabel.
             Stores volume information, including affine transformation matrix for translating image ijk
             coordinates to patient coordinates.
+        :param nifti_image: NIfTI imageobject
+        :param full_path_name: full path and name of the file
+        :param base_name: base name of the file (without extension)
+        :param settings_dict: settings dictionary for the parent
+        :return: None
         """
         canonical_image = nib.as_closest_canonical(nifti_image)
         self.canonical_nifti = canonical_image  # keep a reference to the canonical image
 
         # the voxel_ndarray created by combine_slices has shape [cols, rows, slices]
         # FIXME: is this the right way to get the data? or should we use get_fdata() (which I believe casts to float)?
-        voxel_ndarray = np.asanyarray(canonical_image.dataobj)
+        voxel_ndarray = np.asanyarray(canonical_image.dataobj).astype(nifti_image.header.get_data_dtype())
         self.data = voxel_ndarray
         self.header = canonical_image.header
         # self.data_type =nifti_image.get_data_dtype().name
