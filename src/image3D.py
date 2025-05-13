@@ -7,7 +7,7 @@
 """
 
 import numpy as np
-import dicom_numpy
+# import dicom_numpy
 import nibabel as nib
 import os
 

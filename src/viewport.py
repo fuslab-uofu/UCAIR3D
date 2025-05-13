@@ -157,7 +157,7 @@ class Viewport(QWidget):
         # interactive painting
         self.is_painting = False
         self.is_erasing = False
-        self.paint_brush = PaintBrush()
+        self.paint_brush = PaintBrush(size=5)
 
         self.display_convention = "RAS"  # default to RAS (radiological convention) # TODO, make this an input opt.
 
@@ -172,6 +172,7 @@ class Viewport(QWidget):
         coords_frame.setLayout(QHBoxLayout())
         coords_frame.layout().setContentsMargins(0, 0, 0, 0)
         coords_frame.setStyleSheet("background-color: #000000;")
+        coords_frame.setStyleSheet(f"QFrame#coords_frame {{border: none;}}""")
         # coordinates label
         self.coordinates_label = QLabel("", self)
         font = QFont("Segoe UI", 9)
@@ -180,18 +181,6 @@ class Viewport(QWidget):
         # self.coordinates_label.setAlignment(Qt.AlignVCenter)
         coords_frame.layout().addWidget(self.coordinates_label)
 
-        # add spacing between the buttons and right edge
-        # coords_frame.addStretch()
-        # histogram visibility button
-        # self.histogram_button = QPushButton()
-        # self.histogram_button.setCheckable(True)
-        # self.histogram_button.setChecked(False)
-        # self.histogram_button.setFixedSize(16, 16)
-        # histogram_icon = QIcon("..\\ui\\colorWheelIcon.svg")
-        # self.histogram_button.setIcon(histogram_icon)
-        # self.histogram_button.clicked.connect(self._toggle_histogram)
-        # coords_frame.addWidget(self.histogram_button)
-
         # add the top layout to the main layout (above the imageView)
         main_layout.addWidget(coords_frame)
 
@@ -199,7 +188,8 @@ class Viewport(QWidget):
         image_view_layout = QHBoxLayout()
         # the image view widget ----------
         self.image_view = pg.ImageView()
-        # self.image_view = CustomImageView()
+        self.image_view.setStyleSheet("border: none;")
+
         # access the PlotItem under the time slider
         plot_item = self.image_view.ui.roiPlot  # This is the plot below the image for z/time slider
         # access the bottom axis
@@ -209,15 +199,13 @@ class Viewport(QWidget):
         font.setPointSize(8)  # Set to desired font size
         axis.setTickFont(font)
 
-        # FIXME: testing
-        # self.image_view.setFocusPolicy(Qt.ClickFocus)
-
         self.original_mouse_press = self.image_view.getView().scene().mousePressEvent
         self.original_mouse_release = self.image_view.getView().scene().mouseReleaseEvent
         self.original_mouse_move = self.image_view.getView().scene().mouseMoveEvent
         self.image_view.getHistogramWidget().setVisible(False)
         self.image_view.ui.menuBtn.setVisible(False)  # hide these for now
         self.image_view.ui.roiBtn.setVisible(False)  # hide these for now
+
         image_view_layout.addWidget(self.image_view, stretch=2)
         main_layout.addLayout(image_view_layout)
 
@@ -265,30 +253,22 @@ class Viewport(QWidget):
         for i in range(0, self.num_vols_allowed):
             self.image_view.view.addItem(self.array2D_stack[i])
         # add a canvas mask for painting
-        # self.imageItem3D_canvas = pg.ImageItem()
         self.imageItem2D_canvas = pg.ImageItem()
         self.image_view.view.addItem(self.imageItem2D_canvas)
 
         # this is the plot item for creating points. Customized to capture mouse press and mouse release events
         self.scatter = CustomScatterPlotItem()
         self.scatter.set_mouse_press_callback(self._scatter_mouse_press)
-        # self.scatter.set_mouse_release_callback(self._scatter_mouse_release)
         self.image_view.getView().addItem(self.scatter)
 
         # connect the mouse move event to the graphics scene
         self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
-        # self.image_view.getView().scene().sigMouseMoved.connect(self._mouse_move)
 
         # connect the mouse click event to the graphics scene
         self.image_view.getView().scene().mousePressEvent = self._mouse_press
-        # self.image_view.imageItem.mousePressEvent = self._mouse_press
 
         # connect the mouse release event to the graphics scene
         self.image_view.getView().scene().mouseReleaseEvent = self._mouse_release
-        # self.image_view.imageItem.mouseReleaseEvent = self._mouse_release
-
-        # connect the mouse click event to the graphics scene
-        # self.image_view.imageItem.mouseClickEvent = self._mouse_click
 
         # when the timeLine position changes, update the overlays
         self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
@@ -1174,8 +1154,8 @@ class Viewport(QWidget):
                     dmin = overlay_image_object.data_min
                     dmax = overlay_image_object.data_max
                     # compute normalized indices into [0…255]
-                    lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
-                    hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
+                    lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
+                    hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
                     lut = overlay_image_object.colormap.getLookupTable(
                         start=0.0,  # maps to cm position 0.0
                         stop=1.0,  # maps to cm position 1.0
@@ -1184,6 +1164,10 @@ class Viewport(QWidget):
                     )
                     lut[:lo_idx, 3] = 0  # below min → transparent
                     lut[hi_idx:, 3] = 0  # above max → transparent
+
+                    # Scale the remaining alpha values by the overall alpha
+                    lut[:, 3] = (lut[:, 3].astype(float) * overlay_image_object.alpha).astype(np.uint8)
+
                     image_item.setLookupTable(lut)
                 else:
                     # Set the levels to prevent LUT rescaling based on the slice content
@@ -1543,6 +1527,11 @@ class Viewport(QWidget):
 
         # Define the range for the brush area
         half_brush = self.paint_brush.get_size() // 2
+
+        # FIXME: debugging
+        print(f"VIEWPORT paint_brush size: {self.paint_brush.get_size()}")
+        print(f"VIEWPORT half_brush: {half_brush}, x: {x}, y: {y}")
+
         x_start = max(0, x - half_brush)
         x_end = min(data_slice.shape[0], x + half_brush + 1)
         y_start = max(0, y - half_brush)

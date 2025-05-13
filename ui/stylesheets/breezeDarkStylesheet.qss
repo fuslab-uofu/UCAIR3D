@@ -41,6 +41,7 @@
  * Department of Radiology and Imaging Sciences
  * University of Utah
  * 04/2024
+ * 05/2025
  */
 
 /**
@@ -166,8 +167,9 @@ QGroupBox
 {
     /* Need to make sure the groupbox doesn't compress below the title. */
     min-height: 1.2em;
-    border: 0.04em solid #76797c;
-    border-radius: 0.09em;
+	border-style: inset;
+	border-width: 2px;
+    border-color: #1D2023;
     /**
      * This gives us enough space at the top to ensure we can move the
      * title to be inside the guidelines, and the padding at the top
@@ -175,12 +177,6 @@ QGroupBox
      */
     margin-top: 0.5em;
     padding-top: 1em;
-}
-
-QGroupBox:focus
-{
-    border: 0.04em solid #76797c;
-    border-radius: 0.09em;
 }
 
 QGroupBox::title
@@ -194,13 +190,6 @@ QGroupBox::title
     padding-right: 0.2em;
 }
 
-QGroupBox:flat
-{
-    border-top: 0.04em solid #626568;
-    border-left: 0.04em transparent #76797c;
-    border-right: 0.04em transparent #76797c;
-    border-bottom: 0.04em transparent #76797c;
-}
 
 QCheckBox::indicator,
 QTreeView::indicator,
@@ -335,12 +324,12 @@ QMenu::indicator:non-exclusive:unchecked:selected
 
 QMenu::indicator:non-exclusive:checked
 {
-    border-image: url(../icons/checkbox_checked.svg);
+    border-image: url(../icons/check_icon.svg);
 }
 
 QMenu::indicator:non-exclusive:checked:selected
 {
-    border-image: url(../icons/checkbox_checked.svg);
+    border-image: url(../icons/check_icon.svg);
 }
 
 QMenu::indicator:exclusive:unchecked
@@ -627,28 +616,6 @@ QMenu::separator
     margin-left: 0.41em;
     margin-right: 0.41em;
 }
-
-QFrame
-{
-	border-style: inset;
-	border-width: 2px;
-	border-color: #1D2023;
-}
-
-QFrame[frameShape="2"], /* QFrame::Panel == 0x0003 */
-QFrame[frameShape="3"], /* QFrame::WinPanel == 0x0003 */
-QFrame[frameShape="4"], /* QFrame::HLine == 0x0004 */
-QFrame[frameShape="5"], /* QFrame::VLine == 0x0005 */
-QFrame[frameShape="6"]  /* QFrame::StyledPanel == 0x0006 */
-{
-    border-width: 0.04em;
-    padding: 0.09em;
-    border-style: solid;
-    border-color: #31363b;
-    background-color: #76797c;
-    border-radius: 0.23em;
-}
-
 
 /* Provide highlighting for frame objects. */
 /* MMKline - no hover highlighting, please */
@@ -1792,96 +1759,6 @@ QAbstractItemView::item QLineEdit
     padding: 0em;
 }
 
-QSlider::handle:horizontal,
-QSlider::handle:vertical
-{
-    background: #1d2023;
-    border: 0.04em solid #626568;
-    width: 0.7em;
-    height: 0.7em;
-    border-radius: 0.35em;
-}
-
-QSlider:horizontal
-{
-    height: 2em;
-}
-
-QSlider:vertical
-{
-    width: 2em;
-}
-
-QSlider::handle:horizontal
-{
-    margin: -0.23em 0;
-}
-
-QSlider::handle:vertical
-{
-    margin: 0 -0.23em;
-}
-
-
-QSlider::groove:horizontal,
-QSlider::groove:vertical
-{
-    background: #2c3034;
-    border: 0em solid #31363b;
-    border-radius: 0.19em;
-}
-
-QSlider::groove:horizontal
-{
-    height: 0.4em;
-}
-
-QSlider::groove:vertical
-{
-    width: 0.4em;
-}
-
-QSlider::handle:horizontal:hover,
-QSlider::handle:horizontal:focus,
-QSlider::handle:vertical:hover,
-QSlider::handle:vertical:focus
-{
-    border: 0.04em solid #447CF9;
-}
-
-QSlider::handle:horizontal:!focus:!hover,
-QSlider::handle:vertical:!focus:!hover
-{
-    border: 0.04em solid #626568;
-}
-
-QSlider::sub-page:horizontal,
-QSlider::add-page:horizontal
-{
-    background: #447CF9;
-    border-radius: 0.19em;
-}
-
-QSlider::sub-page:vertical,
-QSlider::add-page:vertical
-{
-    background: #447CF9;
-    border-radius: 0.19em;
-}
-
-QSlider::sub-page:horizontal:disabled,
-QSlider::add-page:horizontal:disabled
-{
-    background: #626568;
-    border-radius: 0.19em;
-}
-
-QSlider::sub-page:vertical:disabled,
-QSlider::add-page:vertical:disabled
-{
-    background: #626568;
-    border-radius: 0.19em;
-}
 
 
 /* QToolButton */
