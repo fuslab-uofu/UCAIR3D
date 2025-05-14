@@ -8,8 +8,10 @@ from PyQt5.QtGui import QFont, QPainter, QImage
 from PyQt5.QtCore import pyqtSignal, QObject, QEvent
 from PyQt5.QtSvg import QSvgGenerator
 
-from enumerations import ViewDir
-from paint_brush import PaintBrush
+from .enumerations import ViewDir
+from .paint_brush import PaintBrush
+# from enumerations import ViewDir
+# from paint_brush import PaintBrush
 
 
 class WheelEventFilter(QObject):
@@ -381,6 +383,7 @@ class Viewport(QWidget):
                 if 0 <= slice_index < img_shape[0]:
                     self.current_slice_index = slice_index
                     self.refresh_preserve_extent()
+                    # self.refresh()
 
     # def remove_layer(self, stack_position):
     #     # FIXME: this wipes out the image3D object! That is not what we want to do
@@ -499,6 +502,7 @@ class Viewport(QWidget):
             self.current_slice_index = plot_data_crs[2]
             self.goto_slice(plot_data_crs[2])
             self.refresh_preserve_extent()
+            # self.refresh()
             if notify:
                 self.marker_selected_signal.emit(mkr, self.id, self.view_dir)
 
@@ -959,20 +963,20 @@ class Viewport(QWidget):
         """
         Refresh the viewport without changing the current view extent.
         """
-        # save the current view state (extent)
-        view_box = self.image_view.getView()
-        current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
-        # FIXME: temp
-        print(f"current_range: {current_range}")
+        # # save the current view state (extent)
+        # view_box = self.image_view.getView()
+        # current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
+        # # FIXME: temp
+        # print(f"current_range: {current_range}")
 
         self.refresh()
 
-        # restore the view range
-        view_box.setRange(
-            xRange=current_range[0],
-            yRange=current_range[1],
-            padding=0  # Disable padding to restore exact range
-        )
+        # # restore the view range
+        # view_box.setRange(
+        #     xRange=current_range[0],
+        #     yRange=current_range[1],
+        #     padding=0  # Disable padding to restore exact range
+        # )
 
     def refresh(self):
         """
@@ -1099,6 +1103,7 @@ class Viewport(QWidget):
         self.current_slice_index = self.image_view.currentIndex
 
         self.refresh_preserve_extent()
+        # self.refresh()
 
         self.slice_changed_signal.emit(self.id, self.current_slice_index)
 

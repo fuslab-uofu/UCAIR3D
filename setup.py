@@ -2,12 +2,12 @@ from setuptools import setup, find_packages
 
 setup(
     name='ucair3d',
-    version='0.1',
+    version='0.1.0',
     packages=find_packages(),
     description='Reusable PyQt5 components and UI files for 3D visualization',
-    author='Your Name',
-    include_package_data=True,
-    extras_require={
-        'graphing': ['pyqtgraph>=0.13.0'],
-    },
+    long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
+    author='Michelle Kline',
+    author_email='michelle.kline@utah.edu',
+    python_requires=">=3.9"
 )

@@ -11,8 +11,8 @@ import numpy as np
 import nibabel as nib
 import os
 
-from enumerations import ViewDir
-
+from .enumerations import ViewDir
+# from enumerations import ViewDir
 
 class Image3D:
     """
