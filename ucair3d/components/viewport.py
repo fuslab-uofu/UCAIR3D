@@ -344,7 +344,7 @@ class Viewport(QWidget):
                 # DEBUG:
                 # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
-                ratio = image.dz / image.dy
+                ratio = float(image.dz / image.dy)
 
             # set the aspect ratio of the image view to match this new image
             # FIXME: is there a better way to do this? Should this be done in refresh()?
@@ -362,8 +362,9 @@ class Viewport(QWidget):
             # FIXME: correct?
             self.background_image_index = 0
 
-        self.refresh_preserve_extent()
-        # self.refresh()
+        # don't use preserve extent here - extent is currently set to some unknown default value
+        # self.refresh_preserve_extent()
+        self.refresh()
 
         # TODO: update the layer selection combo and active layer
 
@@ -963,20 +964,23 @@ class Viewport(QWidget):
         """
         Refresh the viewport without changing the current view extent.
         """
-        # # save the current view state (extent)
-        # view_box = self.image_view.getView()
-        # current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
+        # save the current view state (extent)
+        view_box = self.image_view.getView()
+        current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
         # # FIXME: temp
         # print(f"current_range: {current_range}")
 
         self.refresh()
 
-        # # restore the view range
-        # view_box.setRange(
-        #     xRange=current_range[0],
-        #     yRange=current_range[1],
-        #     padding=0  # Disable padding to restore exact range
-        # )
+        # restore the view range
+        view_box.setRange(
+            xRange=current_range[0],
+            yRange=current_range[1],
+            padding=0  # Disable padding to restore exact range
+        )
+
+        # FIXME: temp
+        my_debug_stop = 24
 
     def refresh(self):
         """
@@ -1025,30 +1029,30 @@ class Viewport(QWidget):
 
                     main_image = self.image_view.getImageItem()
 
-                    if im_obj.clipping:
-                        # "clip" the image data to the display range (make vals outside range transparent)
-                        lo = im_obj.display_min
-                        hi = im_obj.display_max
-                        dmin = im_obj.data_min
-                        dmax = im_obj.data_max
-                        # compute normalized indices into [0…255]
-                        lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
-                        hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
-                        lut = im_obj.colormap.getLookupTable(
-                            start=0.0,  # maps to cm position 0.0
-                            stop=1.0,  # maps to cm position 1.0
-                            nPts=256,
-                            alpha=True  # include the alpha channel
-                        )
-                        lut[:lo_idx, 3] = 0  # below min → transparent
-                        lut[hi_idx:, 3] = 0  # above max → transparent
-                        main_image.setLookupTable(lut)
-                    else:
-                        # Set the levels to prevent LUT rescaling based on the slice content
-                        main_image.setLevels([im_obj.display_min, im_obj.display_max])
-                        # apply the opacity of the Image3D object to the ImageItem
-                        main_image.setOpacity(im_obj.alpha)
-                        main_image.setColorMap(im_obj.colormap)
+                    # if im_obj.clipping:
+                    #     # "clip" the image data to the display range (make vals outside range transparent)
+                    #     lo = im_obj.display_min
+                    #     hi = im_obj.display_max
+                    #     dmin = im_obj.data_min
+                    #     dmax = im_obj.data_max
+                    #     # compute normalized indices into [0…255]
+                    #     lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
+                    #     hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
+                    #     lut = im_obj.colormap.getLookupTable(
+                    #         start=0.0,  # maps to cm position 0.0
+                    #         stop=1.0,  # maps to cm position 1.0
+                    #         nPts=256,
+                    #         alpha=True  # include the alpha channel
+                    #     )
+                    #     lut[:lo_idx, 3] = 0  # below min → transparent
+                    #     lut[hi_idx:, 3] = 0  # above max → transparent
+                    #     main_image.setLookupTable(lut)
+                    # else:
+                    # Set the levels to prevent LUT rescaling based on the slice content
+                    main_image.setLevels([im_obj.display_min, im_obj.display_max])
+                    # apply the opacity of the Image3D object to the ImageItem
+                    main_image.setOpacity(im_obj.alpha)
+                    main_image.setColorMap(im_obj.colormap)
 
                     # FIXME: correct? # radiological convention = RAS+ notation
                     #  (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
@@ -1155,34 +1159,34 @@ class Viewport(QWidget):
                 # apply the slice to the overlay ImageItem
                 image_item.setImage(overlay_slice)
 
-                if overlay_image_object.clipping:
-                    # "clip" the image data to the display range (make vals outside range transparent)
-                    lo = overlay_image_object.display_min
-                    hi = overlay_image_object.display_max
-                    dmin = overlay_image_object.data_min
-                    dmax = overlay_image_object.data_max
-                    # compute normalized indices into [0…255]
-                    lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
-                    hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
-                    lut = overlay_image_object.colormap.getLookupTable(
-                        start=0.0,  # maps to cm position 0.0
-                        stop=1.0,  # maps to cm position 1.0
-                        nPts=256,
-                        alpha=True  # include the alpha channel
-                    )
-                    lut[:lo_idx, 3] = 0  # below min → transparent
-                    lut[hi_idx:, 3] = 0  # above max → transparent
-
-                    # Scale the remaining alpha values by the overall alpha
-                    lut[:, 3] = (lut[:, 3].astype(float) * overlay_image_object.alpha).astype(np.uint8)
-
-                    image_item.setLookupTable(lut)
-                else:
-                    # Set the levels to prevent LUT rescaling based on the slice content
-                    image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
-                    # apply the opacity of the Image3D object to the ImageItem
-                    image_item.setOpacity(overlay_image_object.alpha)
-                    image_item.setColorMap(overlay_image_object.colormap)
+                # if overlay_image_object.clipping:
+                #     # "clip" the image data to the display range (make vals outside range transparent)
+                #     lo = overlay_image_object.display_min
+                #     hi = overlay_image_object.display_max
+                #     dmin = overlay_image_object.data_min
+                #     dmax = overlay_image_object.data_max
+                #     # compute normalized indices into [0…255]
+                #     lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
+                #     hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
+                #     lut = overlay_image_object.colormap.getLookupTable(
+                #         start=0.0,  # maps to cm position 0.0
+                #         stop=1.0,  # maps to cm position 1.0
+                #         nPts=256,
+                #         alpha=True  # include the alpha channel
+                #     )
+                #     lut[:lo_idx, 3] = 0  # below min → transparent
+                #     lut[hi_idx:, 3] = 0  # above max → transparent
+                #
+                #     # Scale the remaining alpha values by the overall alpha
+                #     lut[:, 3] = (lut[:, 3].astype(float) * overlay_image_object.alpha).astype(np.uint8)
+                #
+                #     image_item.setLookupTable(lut)
+                # else:
+                # Set the levels to prevent LUT rescaling based on the slice content
+                image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
+                # apply the opacity of the Image3D object to the ImageItem
+                image_item.setOpacity(overlay_image_object.alpha)
+                image_item.setColorMap(overlay_image_object.colormap)
 
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""

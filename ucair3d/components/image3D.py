@@ -135,10 +135,12 @@ class Image3D:
             self.file_base_name = os.path.splitext(base_name)[0]  # remove any potential additional extensions (.nii.gz)
         self.file_type = 'nifti'
 
-        self.dx = canonical_image.header['pixdim'][1:4][0]  # ROW height
-        self.dy = canonical_image.header['pixdim'][1:4][1]  # COL width
+        # header stores these as float32 (why so big?)
+        # causes overflow when using them to set aspect ratio, so cast to float
+        self.dx = float(canonical_image.header['pixdim'][1:4][0]) # ROW height
+        self.dy = float(canonical_image.header['pixdim'][1:4][1])  # COL width
         # FIXME: need to consider spacing between slices?
-        self.dz = canonical_image.header['pixdim'][1:4][2]
+        self.dz = float(canonical_image.header['pixdim'][1:4][2])
         self.num_rows = self.data.shape[1]  # notice order here - num_rows = shape[1] = y
         self.num_cols = self.data.shape[0]  # num_cols = shape[0] = x
         self.num_slices = self.data.shape[2]
