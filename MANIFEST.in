@@ -1,0 +1,2 @@
+
+recursive-include ucair3d/ui *.ui *.qss *.png *.svg

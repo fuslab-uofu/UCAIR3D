@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: ucair3d
+Version: 0.1
+Summary: Reusable PyQt5 components and UI files for 3D visualization
+Author: Your Name
+Provides-Extra: graphing
+Requires-Dist: pyqtgraph>=0.13.0; extra == "graphing"
+Dynamic: author
+Dynamic: provides-extra
+Dynamic: summary

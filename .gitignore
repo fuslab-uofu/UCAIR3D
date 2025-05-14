@@ -1,4 +1,5 @@
 _myStuff/
+_junk/
 .pytest_cache/
 __pychache__/
 src/__pychache__/

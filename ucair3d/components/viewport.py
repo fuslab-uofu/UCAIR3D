@@ -350,7 +350,7 @@ class Viewport(QWidget):
             # start at middle slice
             self.current_slice_index = (int(self.array3D_stack[stack_position].shape[0] // 2))
 
-            self.refresh_preserve_extent()
+            # self.refresh_preserve_extent()
             # emit signal to notify parent class that the slice has changed (to update the slice guides in other vps)
             self.slice_changed_signal.emit(self.id, self.current_slice_index)
         else:
@@ -360,7 +360,8 @@ class Viewport(QWidget):
             # FIXME: correct?
             self.background_image_index = 0
 
-        self.refresh()
+        self.refresh_preserve_extent()
+        # self.refresh()
 
         # TODO: update the layer selection combo and active layer
 
@@ -961,6 +962,8 @@ class Viewport(QWidget):
         # save the current view state (extent)
         view_box = self.image_view.getView()
         current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
+        # FIXME: temp
+        print(f"current_range: {current_range}")
 
         self.refresh()
 
@@ -1529,8 +1532,8 @@ class Viewport(QWidget):
         half_brush = self.paint_brush.get_size() // 2
 
         # FIXME: debugging
-        print(f"VIEWPORT paint_brush size: {self.paint_brush.get_size()}")
-        print(f"VIEWPORT half_brush: {half_brush}, x: {x}, y: {y}")
+        # print(f"VIEWPORT paint_brush size: {self.paint_brush.get_size()}")
+        # print(f"VIEWPORT half_brush: {half_brush}, x: {x}, y: {y}")
 
         x_start = max(0, x - half_brush)
         x_end = min(data_slice.shape[0], x + half_brush + 1)
