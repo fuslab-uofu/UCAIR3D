@@ -980,7 +980,7 @@ class Viewport(QWidget):
         )
 
         # FIXME: temp
-        my_debug_stop = 24
+        # my_debug_stop = 24
 
     def refresh(self):
         """
@@ -1159,34 +1159,34 @@ class Viewport(QWidget):
                 # apply the slice to the overlay ImageItem
                 image_item.setImage(overlay_slice)
 
-                # if overlay_image_object.clipping:
-                #     # "clip" the image data to the display range (make vals outside range transparent)
-                #     lo = overlay_image_object.display_min
-                #     hi = overlay_image_object.display_max
-                #     dmin = overlay_image_object.data_min
-                #     dmax = overlay_image_object.data_max
-                #     # compute normalized indices into [0…255]
-                #     lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
-                #     hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
-                #     lut = overlay_image_object.colormap.getLookupTable(
-                #         start=0.0,  # maps to cm position 0.0
-                #         stop=1.0,  # maps to cm position 1.0
-                #         nPts=256,
-                #         alpha=True  # include the alpha channel
-                #     )
-                #     lut[:lo_idx, 3] = 0  # below min → transparent
-                #     lut[hi_idx:, 3] = 0  # above max → transparent
-                #
-                #     # Scale the remaining alpha values by the overall alpha
-                #     lut[:, 3] = (lut[:, 3].astype(float) * overlay_image_object.alpha).astype(np.uint8)
-                #
-                #     image_item.setLookupTable(lut)
-                # else:
-                # Set the levels to prevent LUT rescaling based on the slice content
-                image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
-                # apply the opacity of the Image3D object to the ImageItem
-                image_item.setOpacity(overlay_image_object.alpha)
-                image_item.setColorMap(overlay_image_object.colormap)
+                if overlay_image_object.clipping:
+                    # "clip" the image data to the display range (make vals outside range transparent)
+                    lo = overlay_image_object.display_min
+                    hi = overlay_image_object.display_max
+                    dmin = overlay_image_object.data_min
+                    dmax = overlay_image_object.data_max
+                    # compute normalized indices into [0…255]
+                    lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
+                    hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(np.uint8), 0, 255)
+                    lut = overlay_image_object.colormap.getLookupTable(
+                        start=0.0,  # maps to cm position 0.0
+                        stop=1.0,  # maps to cm position 1.0
+                        nPts=256,
+                        alpha=True  # include the alpha channel
+                    )
+                    lut[:lo_idx, 3] = 0  # below min → transparent
+                    lut[hi_idx:, 3] = 0  # above max → transparent
+
+                    # Scale the remaining alpha values by the overall alpha
+                    lut[:, 3] = (lut[:, 3].astype(float) * overlay_image_object.alpha).astype(np.uint8)
+
+                    image_item.setLookupTable(lut)
+                else:
+                    # Set the levels to prevent LUT rescaling based on the slice content
+                    image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
+                    # apply the opacity of the Image3D object to the ImageItem
+                    image_item.setOpacity(overlay_image_object.alpha)
+                    image_item.setColorMap(overlay_image_object.colormap)
 
     def _update_opacity(self, value):
         """Update the opacity of the active imageItem as well as the Image3D object."""
