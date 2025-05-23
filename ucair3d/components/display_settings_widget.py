@@ -126,6 +126,7 @@ class DisplaySettingsWidget(QFrame):
                     background: black;
                     border: none;
                 }
+                
                 QRangeSlider {
                     qproperty-barColor: #005FB8;
                 }"""
