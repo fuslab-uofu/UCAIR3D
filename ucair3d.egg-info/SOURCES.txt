@@ -3,7 +3,6 @@ README.md
 setup.py
 tests/testViewport.py
 ucair3d/__init__.py
-ucair3d/config.py
 ucair3d.egg-info/PKG-INFO
 ucair3d.egg-info/SOURCES.txt
 ucair3d.egg-info/dependency_links.txt
@@ -32,7 +31,6 @@ ucair3d/components/viewport.py
 ucair3d/ui/UCAIR3DMainWindow.ui
 ucair3d/ui/Ui_display_settings_widget.ui
 ucair3d/ui/Ui_threshold_widget.ui
-ucair3d/ui/__init__.py
 ucair3d/ui/discreteColorsFrame.ui
 ucair3d/ui/qtd_display_settings_widget.ui
 ucair3d/ui/icons/Accent_icon.png
@@ -271,7 +269,6 @@ ucair3d/ui/stylesheets/ElegantDark.qss
 ucair3d/ui/stylesheets/Geoo.qss
 ucair3d/ui/stylesheets/Photoxo.qss
 ucair3d/ui/stylesheets/breezeDarkStylesheet.qss
-ucair3d/ui/stylesheets/breezeDarkStylesheet_backup.qss
 ucair3d/ui/stylesheets/darkstyle.qss
 ucair3d/ui/stylesheets/labelButtonStylesheet.qss
 ucair3d/ui/stylesheets/orangeDark.qss
