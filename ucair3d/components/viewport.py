@@ -13,6 +13,32 @@ from .paint_brush import PaintBrush
 # from enumerations import ViewDir
 # from paint_brush import PaintBrush
 
+# import cProfile, pstats, io
+# from functools import wraps
+#
+# def profile_slot(func):
+#     @wraps(func)
+#     def wrapper(*args, **kwargs):
+#         pr = cProfile.Profile()
+#         pr.enable()
+#         try:
+#             return func(*args, **kwargs)
+#         finally:
+#             pr.disable()
+#             # collect and strip out directory prefixes
+#             s = io.StringIO()
+#             stats = pstats.Stats(pr, stream=s).strip_dirs()
+#             stats.sort_stats('cumulative')
+#             # only show lines from viewport.py or LandMarker.py:
+#             # the regex matches either substring 'viewport' or 'LandMarker'
+#             stats.print_stats(r'(viewport|LandMarker)')
+#             # if you want to see who calls your handler, uncomment:
+#             # stats.print_callers('Viewport._mouse_press')
+#             # …or what it calls:
+#             # stats.print_callees('Viewport._mouse_press')
+#             print(s.getvalue())
+#     return wrapper
+
 
 class WheelEventFilter(QObject):
     def __init__(self, imageView):
@@ -267,6 +293,9 @@ class Viewport(QWidget):
         self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
 
         # connect the mouse click event to the graphics scene
+        # # wrap existing method in the profiler
+        # self._mouse_press = profile_slot(self._mouse_press)
+
         self.image_view.getView().scene().mousePressEvent = self._mouse_press
 
         # connect the mouse release event to the graphics scene
@@ -439,6 +468,12 @@ class Viewport(QWidget):
         :param new_id: str (optional, unique id for the new marker, for same marker id in multiple viewports [landmarks])
         :return: new_marker: dict (marker data)
         """
+
+        if self.parent.verbose_mode:  # DEBUG: print debug messages
+            print(f"add_marker() image_col: {image_col}, image_row: {image_row}, image_slice: {image_slice}, "
+                  f"image_index: {image_index}")
+
+
         new_marker = None
 
         # FIXME: use the image specified by marker_layer_index, not necessarily the background_image_index?
@@ -490,6 +525,9 @@ class Viewport(QWidget):
         :param notify: bool (whether to notify the parent class)
         :return:
         """
+        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+            print(f"select_marker() with marker {mkr} and notify {notify} for viewport {self.id}")
+
         if mkr is not None:
             if self.selected_marker is not None:
                 # deselect previously selected point
@@ -503,7 +541,6 @@ class Viewport(QWidget):
             self.current_slice_index = plot_data_crs[2]
             self.goto_slice(plot_data_crs[2])
             self.refresh_preserve_extent()
-            # self.refresh()
             if notify:
                 self.marker_selected_signal.emit(mkr, self.id, self.view_dir)
 
@@ -514,6 +551,10 @@ class Viewport(QWidget):
         :param point_id: str (unique ID of the point)
         :return: tuple (slice_index, point_data) if found, otherwise None
         """
+
+        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+            print(f"find_marker_by_id() with id {point_id} for viewport {self.id}")
+
         for slice_idx, points in self.slice_markers.items():
             for pt in points:
                 if pt['id'] == point_id:
@@ -521,6 +562,10 @@ class Viewport(QWidget):
         return None
 
     def delete_marker(self, marker_id):
+
+        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+            print(f"select_marker() with marker {marker_id} for viewport {self.id}")
+
         for slice_idx, slice_markers in self.slice_markers.items():
             for mk in slice_markers:
                 if mk['id'] == marker_id:
@@ -538,6 +583,10 @@ class Viewport(QWidget):
 
         :return:
         """
+
+        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+            print(f"clear_selected_markers() for viewport {self.id}")
+
         for slice_idx, points in self.slice_markers.items():
             for pt in points:
                 pt['is_selected'] = False
@@ -987,6 +1036,9 @@ class Viewport(QWidget):
         Should be called when one of the images displayed in the viewport changes. Sets the image item, and connects the
         histogram widget to the image item. Also updates the overlay images.
         """
+
+        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+            print(f"refresh() for viewport {self.id}")
 
         self.image_view.clear()
 
@@ -1595,6 +1647,9 @@ class Viewport(QWidget):
 
         :return:
         """
+        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+            print(f"_update_markers_display() for viewport {self.id}")
+
         # get markers for the current slice
         current_slice = int(self.image_view.currentIndex)
         markers = self.slice_markers.get(current_slice, [])
