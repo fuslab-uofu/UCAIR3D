@@ -10,34 +10,35 @@ from PyQt5.QtSvg import QSvgGenerator
 
 from .enumerations import ViewDir
 from .paint_brush import PaintBrush
-# from enumerations import ViewDir
-# from paint_brush import PaintBrush
 
-# import cProfile, pstats, io
-# from functools import wraps
-#
-# def profile_slot(func):
-#     @wraps(func)
-#     def wrapper(*args, **kwargs):
-#         pr = cProfile.Profile()
-#         pr.enable()
-#         try:
-#             return func(*args, **kwargs)
-#         finally:
-#             pr.disable()
-#             # collect and strip out directory prefixes
-#             s = io.StringIO()
-#             stats = pstats.Stats(pr, stream=s).strip_dirs()
-#             stats.sort_stats('cumulative')
-#             # only show lines from viewport.py or LandMarker.py:
-#             # the regex matches either substring 'viewport' or 'LandMarker'
-#             stats.print_stats(r'(viewport|LandMarker)')
-#             # if you want to see who calls your handler, uncomment:
-#             # stats.print_callers('Viewport._mouse_press')
-#             # …or what it calls:
-#             # stats.print_callees('Viewport._mouse_press')
-#             print(s.getvalue())
-#     return wrapper
+
+# this is a wrapper for functions that we want to profile.
+# displays info about the number of calls, time spent in each function, etc. on the console.
+import cProfile, pstats, io
+from functools import wraps
+
+def profile_slot(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        pr = cProfile.Profile()
+        pr.enable()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            pr.disable()
+            # collect and strip out directory prefixes
+            s = io.StringIO()
+            stats = pstats.Stats(pr, stream=s).strip_dirs()
+            stats.sort_stats('cumulative')
+            # only show lines from viewport.py or LandMarker.py:
+            # the regex matches either substring 'viewport' or 'LandMarker'
+            stats.print_stats(r'(viewport|LandMarker)')
+            # if you want to see who calls your handler, uncomment:
+            # stats.print_callers('Viewport._mouse_press')
+            # …or what it calls:
+            # stats.print_callees('Viewport._mouse_press')
+            print(s.getvalue())
+    return wrapper
 
 
 class WheelEventFilter(QObject):
@@ -293,9 +294,8 @@ class Viewport(QWidget):
         self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
 
         # connect the mouse click event to the graphics scene
-        # # wrap existing method in the profiler
+        # optionally profile this slot - wrap it in the profiler
         # self._mouse_press = profile_slot(self._mouse_press)
-
         self.image_view.getView().scene().mousePressEvent = self._mouse_press
 
         # connect the mouse release event to the graphics scene
@@ -539,8 +539,8 @@ class Viewport(QWidget):
                 return  # FIXME: how to handle?
 
             self.current_slice_index = plot_data_crs[2]
-            self.goto_slice(plot_data_crs[2])
-            self.refresh_preserve_extent()
+            self.goto_slice(plot_data_crs[2])  # calls refresh_preserve_extent()
+            # self.refresh_preserve_extent()
             if notify:
                 self.marker_selected_signal.emit(mkr, self.id, self.view_dir)
 

@@ -375,8 +375,7 @@ QAbstractItemView
 
 QTabWidget:focus,
 QCheckBox:focus,
-QRadioButton:focus,
-QSlider:focus
+QRadioButton:focus
 {
     border: none;
 }
@@ -573,6 +572,16 @@ QScrollBar::sub-page:vertical
 {
     background: none;
 }
+
+/**
+*   MMKline, UCAIR, 2025
+*   solution to interference with custom range sliders
+*   https://github.com/pyapp-kit/superqt/pull/281
+**/
+QSlider { background-color: none;}
+QSlider::add-page:vertical { background: none; border: none; }
+QRangeSlider { qproperty-barColor: #9FCBFF; }
+QDoubleRangeSlider { qproperty-barColor: #9FCBFF; }
 
 QTextEdit
 {
