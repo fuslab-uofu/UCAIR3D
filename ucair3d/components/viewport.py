@@ -11,34 +11,8 @@ from PyQt5.QtSvg import QSvgGenerator
 from .enumerations import ViewDir
 from .paint_brush import PaintBrush
 
-
-# this is a wrapper for functions that we want to profile.
-# displays info about the number of calls, time spent in each function, etc. on the console.
 import cProfile, pstats, io
 from functools import wraps
-
-def profile_slot(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        pr = cProfile.Profile()
-        pr.enable()
-        try:
-            return func(*args, **kwargs)
-        finally:
-            pr.disable()
-            # collect and strip out directory prefixes
-            s = io.StringIO()
-            stats = pstats.Stats(pr, stream=s).strip_dirs()
-            stats.sort_stats('cumulative')
-            # only show lines from viewport.py or LandMarker.py:
-            # the regex matches either substring 'viewport' or 'LandMarker'
-            stats.print_stats(r'(viewport|LandMarker)')
-            # if you want to see who calls your handler, uncomment:
-            # stats.print_callers('Viewport._mouse_press')
-            # …or what it calls:
-            # stats.print_callees('Viewport._mouse_press')
-            print(s.getvalue())
-    return wrapper
 
 
 class WheelEventFilter(QObject):
@@ -294,9 +268,11 @@ class Viewport(QWidget):
         self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
 
         # connect the mouse click event to the graphics scene
-        # optionally profile this slot - wrap it in the profiler
-        # self._mouse_press = profile_slot(self._mouse_press)
-        self.image_view.getView().scene().mousePressEvent = self._mouse_press
+        # optionally, profile this slot by wrapping it in the profiler
+        if self.parent.debug_mode:
+            self.image_view.getView().scene().mousePressEvent = self._mouse_press_wrapper
+        else:
+            self.image_view.getView().scene().mousePressEvent = self._mouse_press
 
         # connect the mouse release event to the graphics scene
         self.image_view.getView().scene().mouseReleaseEvent = self._mouse_release
@@ -331,7 +307,7 @@ class Viewport(QWidget):
     def add_layer(self, image, stack_position):
         """
         Update the stack of 3D images with a new 3D image for this viewPort.
-        image = None is allowed and will clear the layer at the specified position.
+        Image = None is allowed and will clear the layer at the specified position.
         :param image:
         :param stack_position:
         :return:
@@ -381,7 +357,6 @@ class Viewport(QWidget):
             # start at middle slice
             self.current_slice_index = (int(self.array3D_stack[stack_position].shape[0] // 2))
 
-            # self.refresh_preserve_extent()
             # emit signal to notify parent class that the slice has changed (to update the slice guides in other vps)
             self.slice_changed_signal.emit(self.id, self.current_slice_index)
         else:
@@ -391,8 +366,7 @@ class Viewport(QWidget):
             # FIXME: correct?
             self.background_image_index = 0
 
-        # don't use preserve extent here - extent is currently set to some unknown default value
-        # self.refresh_preserve_extent()
+        # don't use refresh_preserve_extent() here - extent is currently set to some unknown default value
         self.refresh()
 
         # TODO: update the layer selection combo and active layer
@@ -469,7 +443,7 @@ class Viewport(QWidget):
         :return: new_marker: dict (marker data)
         """
 
-        if self.parent.verbose_mode:  # DEBUG: print debug messages
+        if self.parent.debug_mode:  # print debug messages
             print(f"add_marker() image_col: {image_col}, image_row: {image_row}, image_slice: {image_slice}, "
                   f"image_index: {image_index}")
 
@@ -525,7 +499,7 @@ class Viewport(QWidget):
         :param notify: bool (whether to notify the parent class)
         :return:
         """
-        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+        if self.parent.debug_mode:  # print debug messages
             print(f"select_marker() with marker {mkr} and notify {notify} for viewport {self.id}")
 
         if mkr is not None:
@@ -552,7 +526,7 @@ class Viewport(QWidget):
         :return: tuple (slice_index, point_data) if found, otherwise None
         """
 
-        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+        if self.parent.debug_mode:  # print debug messages
             print(f"find_marker_by_id() with id {point_id} for viewport {self.id}")
 
         for slice_idx, points in self.slice_markers.items():
@@ -563,7 +537,7 @@ class Viewport(QWidget):
 
     def delete_marker(self, marker_id):
 
-        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+        if self.parent.debug_mode:  # print debug messages
             print(f"select_marker() with marker {marker_id} for viewport {self.id}")
 
         for slice_idx, slice_markers in self.slice_markers.items():
@@ -584,7 +558,7 @@ class Viewport(QWidget):
         :return:
         """
 
-        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+        if self.parent.debug_mode:  # print debug messages
             print(f"clear_selected_markers() for viewport {self.id}")
 
         for slice_idx, points in self.slice_markers.items():
@@ -1037,7 +1011,7 @@ class Viewport(QWidget):
         histogram widget to the image item. Also updates the overlay images.
         """
 
-        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+        if self.parent.debug_mode:  # print debug messages
             print(f"refresh() for viewport {self.id}")
 
         self.image_view.clear()
@@ -1056,7 +1030,7 @@ class Viewport(QWidget):
                     im_data = self.array3D_stack[ind]  # the (optionally transposed) 3D array
                     # self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
                     # setImage causes the z-slider slot to be called, which resets the current slice index to 0
-                    # disconnect slot to prevent this from happening
+                    # disconnect the slot to prevent this from happening
                     try:
                         # disconnect the slot before making changes
                         self.image_view.timeLine.sigPositionChanged.disconnect(self._slice_changed)
@@ -1134,6 +1108,11 @@ class Viewport(QWidget):
         self._update_markers_display()
 
         # update the crosshairs
+        self.update_crosshairs()
+
+        self.image_view.show()
+
+    def update_crosshairs(self):
         if self.background_image_index is None:
             # no image to display, so hide slice guides, even if visibility is set to True
             self.horizontal_line.setVisible(False)
@@ -1144,8 +1123,6 @@ class Viewport(QWidget):
             if self.show_slice_guides:
                 self.horizontal_line.setPos(self.horizontal_line_idx)
                 self.vertical_line.setPos(self.vertical_line_idx)
-
-        self.image_view.show()
 
     #  -----------------------------------------------------------------------------------------------------------------
     #  "Private" methods -----------------------------------------------------------------------------------------------
@@ -1309,7 +1286,7 @@ class Viewport(QWidget):
         :return:
         """
         # DEBUG:
-        # print(f"_mouse_press scene: {event.scenePos()}")
+        #print(f"_mouse_press scene: {event.scenePos()}")
 
         img_item = self.image_view.getImageItem()
         if img_item is None:
@@ -1368,6 +1345,21 @@ class Viewport(QWidget):
 
             # pass the event back to pyqtgraph for any further processing
             self.original_mouse_press(event)
+
+    def _mouse_press_wrapper(self, event):
+        self.profile_method(self._mouse_press, event)
+
+    def profile_method(self, method, *args, **kwargs):
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+        method(*args, **kwargs)
+
+        profiler.disable()
+        s = io.StringIO()
+        ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+        ps.print_stats(10)
+        print(s.getvalue())  # Or log to a file if preferred
 
     def _mouse_move(self, event):
         """
@@ -1647,7 +1639,7 @@ class Viewport(QWidget):
 
         :return:
         """
-        if self.parent.verbose_mode == True:  # DEBUG: print debug messages
+        if self.parent.debug_mode:  # print debug messages
             print(f"_update_markers_display() for viewport {self.id}")
 
         # get markers for the current slice
