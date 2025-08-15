@@ -1,8 +1,10 @@
 MANIFEST.in
 README.md
 setup.py
-tests/testViewport.py
+tests/test_image_3d.py
 ucair3d/__init__.py
+ucair3d/enumerations.py
+ucair3d/ucair3d_mini_app.py
 ucair3d.egg-info/PKG-INFO
 ucair3d.egg-info/SOURCES.txt
 ucair3d.egg-info/dependency_links.txt
@@ -16,8 +18,8 @@ ucair3d/components/colormapCombo.py
 ucair3d/components/custom_image_view.py
 ucair3d/components/discreteColorsFrame.py
 ucair3d/components/display_settings_widget.py
-ucair3d/components/enumerations.py
 ucair3d/components/header_info_dialog.py
+ucair3d/components/image3D - Copy.py
 ucair3d/components/image3D.py
 ucair3d/components/interaction_method.py
 ucair3d/components/mycolors.py

@@ -1,6 +1,6 @@
 from .components.image3D import Image3D
 from .components.viewport import Viewport
-from .components.enumerations import ViewDir
+from .enumerations import ViewDir
 from .components.colormapCombo import ColormapCombo
 from .components.header_info_dialog import HeaderInfoDialog
 from .components.interaction_method import InteractionMethod
