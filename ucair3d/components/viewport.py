@@ -84,7 +84,6 @@ class CustomScatterPlotItem(pg.ScatterPlotItem):
         super().mouseReleaseEvent(event)  # Ensure default behavior is preserved
 
 
-
 class Viewport(QWidget):
     """ This class displays one or more 3D images. It is interactive and allows the user to pan, zoom, and scroll
     through images. Multiple images can be stacked on top of each other to create overlays. The user can also paint
@@ -170,17 +169,14 @@ class Viewport(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(1)
 
-        # horizontal layout for the coordinates label and tool buttons ----------
+        # interactive coordinates display --------------------
         coords_frame = QFrame()
         coords_frame.setObjectName("coords_frame")
         coords_frame.setLayout(QHBoxLayout())
         coords_frame.layout().setContentsMargins(0, 0, 0, 0)
         coords_frame.setStyleSheet("background-color: #000000;")
         coords_frame.setStyleSheet(f"QFrame#coords_frame {{border: none;}}")
-        # coordinates label
         self.coordinates_label = QLabel("", self)
-        # font = QFont("Segoe UI", 9)
-        # font.setItalic(True)
         font = QFont("Courier New", 7)  # use a monospaced font for better alignment
         self.coordinates_label.setFont(font)
         # one‑decimal world format; this string defines the numeric field width
@@ -188,15 +184,12 @@ class Viewport(QWidget):
         self._world_prec = 1
         self._world_field_width = len(world_sample)
         self._vox_field_width = 3
-
         # choose letters for the sample (RAS or xyz doesn’t change total width)
         axis_labels = ("R", "A", "S") if self.display_convention.upper() == "RAS" else ("x", "y", "z")
         sample = f"col:000 row:000 slice:000  |  {axis_labels[0]}:{world_sample} {axis_labels[1]}:{world_sample} {axis_labels[2]}:{world_sample}"
-
         metrics = QFontMetrics(self.coordinates_label.font())
         width = getattr(metrics, "horizontalAdvance", metrics.width)(sample)
         self.coordinates_label.setFixedWidth(width)
-
         # initialize with blanks
         self._set_coords_label(None, None, 0, None)
         coords_frame.layout().addWidget(self.coordinates_label)
@@ -264,7 +257,10 @@ class Viewport(QWidget):
         self.array3D_stack stores the actual 3D array that gets displayed. These arrays may be transposed to match 
         the orientation (ViewDir) of this Viewport.
         self.array2D_stack stores the slices (ImageItems) of the overlay image that will be displayed in the 
-        image view. """
+        image view. 
+        
+        NIfTI image 3D array --> as closest canonical --> Image3D object data
+        Image3D object data --> reorient to axial, coronal, sagittal --> array3D -->"""
         self.image3D_obj_stack = [None] * self.num_vols_allowed  # Image3D objects
         self.array3D_stack = [None] * self.num_vols_allowed  # image data 3D arrays
         # image data 2D arrays (slices) - one less than total number of images allowed because these are overlays
@@ -300,60 +296,22 @@ class Viewport(QWidget):
         self.graphics_scene = self.image_view.getView().scene()
         self.graphics_scene.wheelEvent = self._wheel_event
 
-        # cache last mouse status/position
+        # cache last mouse status/position (for coodinates display)
         self._last_mouse_inside = False
         self._last_plot_x = None
         self._last_plot_y = None
-
+        self._last_valid_im3d_crs = None  # tuple[int,int,int] = (col,row,slc)
+        self._last_valid_world = None  # tuple[float,float,float]
 
     #  -----------------------------------------------------------------------------------------------------------------
     #  "Public" methods API --------------------------------------------------------------------------------------------
     #  -----------------------------------------------------------------------------------------------------------------
 
-    def _wheel_event(self, event):
-        """Use mouse wheel to step through slices; clamp to [0 .. n_slices-1]."""
-        # Figure out how many frames/slices we have
-        frames = None
-        if self.background_image_index is not None:
-            arr = self.array3D_stack[self.background_image_index]
-            if arr is not None and arr.ndim >= 3:
-                frames = arr.shape[0]
-        if frames is None:
-            # Fallback: read from the ImageItem if available
-            img_item = self.image_view.getImageItem()
-            if img_item is not None and getattr(img_item, "image", None) is not None:
-                im = img_item.image
-                if getattr(im, "ndim", 0) >= 3:
-                    frames = im.shape[0]
-
-        if not frames:
-            # Nothing to scroll
-            event.ignore()
-            return
-
-        # Determine wheel direction (Qt5 scene wheel vs. QWheelEvent)
-        delta = event.delta() if hasattr(event, "delta") else event.angleDelta().y()
-        step = 1 if delta > 0 else -1
-
-        # Clamp and set the new index
-        current = int(self.image_view.currentIndex)
-        new_idx = max(0, min(frames - 1, current + step))
-        if new_idx != current:
-            try:
-                self.image_view.setCurrentIndex(new_idx)  # preferred
-            except Exception:
-                try:
-                    self.image_view.timeLine.setValue(new_idx)  # fallback
-                except Exception:
-                    pass
-
-        event.accept()  # swallow default zoom
-
-    def add_layer(self, image, stack_position):
+    def add_layer(self, im3Dobj, stack_position):
         """
         Update the stack of 3D images with a new 3D image for this viewPort.
         Image = None is allowed and will clear the layer at the specified position.
-        :param image:
+        :param im3Dobj:
         :param stack_position:
         :return:
         """
@@ -362,39 +320,39 @@ class Viewport(QWidget):
             # TODO: raise an error or warning - the stack position is out of bounds
             return
 
-        self.image3D_obj_stack[stack_position] = image  # not a deep copy, reference to the image3D object
+        self.image3D_obj_stack[stack_position] = im3Dobj  # not a deep copy, reference to the image3D object
         self.active_image_index = stack_position
         # PyQtGraph expects the first dimension of the array to represent time or frames in a sequence, but when used
         # for static 3D volumes, it expects the first dimension to represent slices (essentially the "depth" dimension
         # for 3D data).
-        if image is not None:
-            # populate the 3D array stack with the data from this image3D object
+        if im3Dobj is not None:
+            # populate the array3D stack with the data from this image3D object
             if self.view_dir == ViewDir.AX.dir:
-                # axial view: transpose image data (x, y, z) to (z, x, y) for pyqtgraph
+                # axial view: transpose im3Dobj data (x, y, z) to (z, x, y) for pyqtgraph
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (2, 0, 1))
                 # DEBUG:
                 # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
-                ratio = image.dy / image.dx
+                ratio = im3Dobj.dy / im3Dobj.dx
             elif self.view_dir == ViewDir.COR.dir:
-                # transpose image data (x, y, z) to (x, z, y) for coronal view, then to (y, x, z) for pyqtgraph
+                # transpose im3Dobj data (x, y, z) to (x, z, y) for coronal view, then to (y, x, z) for pyqtgraph
                 # then save the transposed array  # FIXME: should z be flipped? like x, -z, y?
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (1, 0, 2))
                 # DEBUG:
                 # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
-                ratio = image.dz / image.dx
+                ratio = im3Dobj.dz / im3Dobj.dx
             else:  # "SAG"
-                # transpose image data (x, y, z) to (y, z, x) for sagittal view, then (x, y, z) for pyqtgraph
+                # transpose im3Dobj data (x, y, z) to (y, z, x) for sagittal view, then (x, y, z) for pyqtgraph
                 # then save the transposed array
                 self.array3D_stack[stack_position] = np.transpose(self.image3D_obj_stack[stack_position].data,
                                                                   (0, 1, 2))
                 # DEBUG:
                 # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
-                # ratio = float(image.dz / image.dy)
+                # ratio = float(im3Dobj.dz / im3Dobj.dy)
 
             # set the aspect ratio of the image view to match this new image
             # FIXME: is there a better way to do this? Should this be done in refresh()?
@@ -1169,41 +1127,90 @@ class Viewport(QWidget):
                 self.horizontal_line.setPos(self.horizontal_line_idx)
                 self.vertical_line.setPos(self.vertical_line_idx)
 
+    def export_svg(self, filename='output.svg'):
+        """Saves a PyQtGraph ImageView (base + overlay) as an SVG file."""
+
+        # Step 1: Render the ImageView to a QImage
+        size = self.image_view.size()
+        img = QImage(size.width(), size.height(), QImage.Format_ARGB32)
+        painter = QPainter(img)
+        self.image_view.render(painter)  # Capture ImageView with overlays
+        painter.end()
+
+        # Step 2: Convert the QImage to an SVG
+        svg_generator = QSvgGenerator()
+        svg_generator.setFileName(filename)
+        svg_generator.setSize(size)
+        svg_generator.setViewBox(0, 0, size.width(), size.height())
+
+        # Step 3: Draw the QImage onto the SVG
+        painter = QPainter(svg_generator)
+        painter.drawImage(0, 0, img)
+        painter.end()
+        print(f"Saved: {filename}")
+
     #  -----------------------------------------------------------------------------------------------------------------
     #  "Private" methods -----------------------------------------------------------------------------------------------
     #  -----------------------------------------------------------------------------------------------------------------
 
-    # def _set_coords_label(self, col=None, row=None, slc=None):
-    #     """Update the coordinates label; keep field names, blank numbers if None."""
-    #
-    #     def fmt(v):  # right-aligned 3-char field; blanks if None
-    #         return f"{v:3d}" if isinstance(v, int) else "   "
-    #
-    #     self.coordinates_label.setText(
-    #         f"col:{fmt(col)} row:{fmt(row)} slice:{fmt(slc)}"
-    #     )
+    def _view_axis_index(self):
+        # im3d_crs order is (col, row, slc) == (x, y, z)
+        if self.view_dir == ViewDir.AX.dir:
+            return 2  # slice axis (z)
+        elif self.view_dir == ViewDir.SAG.dir:
+            return 0  # col axis (x)
+        elif self.view_dir == ViewDir.COR.dir:
+            return 1  # row axis (y)
+        return 2
 
-    # def _set_coords_label(self, col=None, row=None, slc=None, world=None):
-    #     """Update the coordinates label; keep field names, blank numbers if None. Optionally show world (x,y,z)."""
-    #
-    #     def fmt_int(v, width=3):
-    #         return f"{int(v):>{width}d}" if isinstance(v, (int, np.integer)) else " " * width
-    #
-    #     def fmt_float(v, width=8, prec=2):
-    #         # fixed-width float field, e.g. " -123.45"
-    #         return f"{float(v):>{width}.{prec}f}" if (v is not None) else " " * width
-    #
-    #     # voxel (image) part
-    #     vox_txt = f"col:{fmt_int(col)} row:{fmt_int(row)} slice:{fmt_int(slc)}"
-    #
-    #     # world part (optional)
-    #     if world is not None and len(world) == 3:
-    #         x, y, z = world
-    #         world_txt = f"  |  x:{fmt_float(x)} y:{fmt_float(y)} z:{fmt_float(z)}"
-    #     else:
-    #         world_txt = "  |  x:" + " " * 8 + " y:" + " " * 8 + " z:" + " " * 8
-    #
-    #     self.coordinates_label.setText(vox_txt + world_txt)
+    def _image_center_indices(self, bg):
+        # im3d_crs order is (col, row, slc) == (x, y, z)
+        # NOTE: use the Image3D data shape in (x, y, z) consistent with your im3d_crs
+        # If your Image3D uses (z, x, y), adjust accordingly.
+        try:
+            x, y, z = bg.data.shape[1], bg.data.shape[2], bg.data.shape[0]  # if bg.data is (z, x, y)
+            return (x // 2, y // 2, z // 2)
+        except Exception:
+            return (0, 0, 0)
+
+    def _wheel_event(self, event):
+        """Use mouse wheel to step through slices; clamp to [0 .. n_slices-1]."""
+        # Figure out how many frames/slices we have
+        frames = None
+        if self.background_image_index is not None:
+            arr = self.array3D_stack[self.background_image_index]
+            if arr is not None and arr.ndim >= 3:
+                frames = arr.shape[0]
+        if frames is None:
+            # Fallback: read from the ImageItem if available
+            img_item = self.image_view.getImageItem()
+            if img_item is not None and getattr(img_item, "image", None) is not None:
+                im = img_item.image
+                if getattr(im, "ndim", 0) >= 3:
+                    frames = im.shape[0]
+
+        if not frames:
+            # Nothing to scroll
+            event.ignore()
+            return
+
+        # Determine wheel direction (Qt5 scene wheel vs. QWheelEvent)
+        delta = event.delta() if hasattr(event, "delta") else event.angleDelta().y()
+        step = 1 if delta > 0 else -1
+
+        # Clamp and set the new index
+        current = int(self.image_view.currentIndex)
+        new_idx = max(0, min(frames - 1, current + step))
+        if new_idx != current:
+            try:
+                self.image_view.setCurrentIndex(new_idx)  # preferred
+            except Exception:
+                try:
+                    self.image_view.timeLine.setValue(new_idx)  # fallback
+                except Exception:
+                    pass
+
+        event.accept()  # swallow default zoom
 
     def _set_coords_label(self, col=None, row=None, slc=None, world=None):
         """
@@ -1220,15 +1227,13 @@ class Viewport(QWidget):
         def fmt_float(v):
             return f"{float(v):>{world_w}.{prec}f}" if (v is not None) else " " * world_w
 
-        # voxel (image) part
+        # image (voxel) coordinate labels
         vox_txt = f"col:{fmt_int(col)} row:{fmt_int(row)} slice:{fmt_int(slc)}"
 
-        # axis labels from the VIEWPORT (not the image)
+        # world (patient) coordinate labels
         labels = ("x", "y", "z")
         if getattr(self, "display_convention", "").upper() == "RAS":
             labels = ("R", "A", "S")
-
-        # world part
         if world is not None and len(world) == 3:
             x, y, z = world
             world_txt = f"  |  {labels[0]}:{fmt_float(x)} {labels[1]}:{fmt_float(y)} {labels[2]}:{fmt_float(z)}"
@@ -1239,53 +1244,15 @@ class Viewport(QWidget):
         self.coordinates_label.setText(vox_txt + world_txt)
 
     def _slice_changed(self):
-        """
-        Simply update self.current_slice_index from the imageView's current slice. Called when the z-slicer has changed.
-        :return:
-        """
-        # self.current_slice_index = self.image_view.currentIndex
-        # self.refresh_preserve_extent()
-        #
-        # if self._last_mouse_inside and self.background_image_index is not None:
-        #     # Recompute image coords at the same plot (x,y) for the new slice
-        #     px, py = self._last_plot_x, self._last_plot_y
-        #     if px is not None and py is not None:
-        #         plot_data_crs = self.plotxyz_to_plotdatacrs(px, py, int(self.current_slice_index))
-        #         if plot_data_crs is not None:
-        #             image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
-        #             if image_crs is not None:
-        #                 self._set_coords_label(int(image_crs[0]), int(image_crs[1]), int(image_crs[2]))
-        #                 self.slice_changed_signal.emit(self.id, self.current_slice_index)
-        #                 return  # done
-        #
-        #     # If we don’t have a valid cached position, just show the slice number
-        # self._set_coords_label(None, None, int(self.current_slice_index))
-        # self.slice_changed_signal.emit(self.id, self.current_slice_index)
+        """Update current slice and overlays, update coordinates display."""
+        if self.background_image_index is None:
+            return
 
-        # self.current_slice_index = self.image_view.currentIndex
-        # self.refresh_preserve_extent()
-        #
-        # if self._last_mouse_inside and self.background_image_index is not None:
-        #     px, py = self._last_plot_x, self._last_plot_y
-        #     if px is not None and py is not None:
-        #         crs = self.plotxyz_to_plotdatacrs(px, py, int(self.current_slice_index))
-        #         if crs is not None:
-        #             img = self.plotdatacrs_to_imagecrs(crs[0], crs[1], crs[2])
-        #             if img is not None:
-        #                 self._set_coords_label(int(img[0]), int(img[1]), int(img[2]))
-        #                 self.slice_changed_signal.emit(self.id, self.current_slice_index)
-        #                 return  # done
-        #
-        # # Fallback if we didn’t manage to recompute
-        # self._set_coords_label(None, None, int(self.current_slice_index))
-        # self.slice_changed_signal.emit(self.id, self.current_slice_index)
-
-        """Update current slice and overlays; preserve col/row if mouse is still inside, and show world coords."""
         self.current_slice_index = self.image_view.currentIndex
         self.refresh_preserve_extent()
 
         # If we know the last plot (x,y) and the mouse was inside, recompute voxel + world
-        if self._last_mouse_inside and self.background_image_index is not None:
+        if self._last_mouse_inside:
             px, py = self._last_plot_x, self._last_plot_y
             if px is not None and py is not None:
                 crs = self.plotxyz_to_plotdatacrs(px, py, int(self.current_slice_index))
@@ -1295,14 +1262,13 @@ class Viewport(QWidget):
                         bg_img = self.image3D_obj_stack[self.background_image_index]
                         if bg_img is not None and hasattr(bg_img, "voxel_to_world"):
                             wx, wy, wz = bg_img.voxel_to_world(np.array([int(img[0]), int(img[1]), int(img[2])]))
-                            self._set_coords_label(int(img[0]), int(img[1]), int(img[2]), (wx, wy, wz))
+                            self._set_coords_label(int(img[0]), int(img[1]), int(img[2]), world=(wx, wy, wz))
                         else:
                             self._set_coords_label(int(img[0]), int(img[1]), int(img[2]), None)
-                        self.slice_changed_signal.emit(self.id, self.current_slice_index)
-                        return  # done
+        else:
+            # outside image bounds, so just update the slice index
+            self._handle_out_of_bounds()
 
-        # Fallback: slice only (blank voxel/world)
-        self._set_coords_label(None, None, int(self.current_slice_index), None)
         self.slice_changed_signal.emit(self.id, self.current_slice_index)
 
     def _update_overlays(self):
@@ -1500,9 +1466,9 @@ class Viewport(QWidget):
             self.original_mouse_press(event)
 
     def _mouse_press_wrapper(self, event):
-        self.profile_method(self._mouse_press, event)
+        self._profile_method(self._mouse_press, event)
 
-    def profile_method(self, method, *args, **kwargs):
+    def _profile_method(self, method, *args, **kwargs):
         profiler = cProfile.Profile()
         profiler.enable()
 
@@ -1514,125 +1480,123 @@ class Viewport(QWidget):
         ps.print_stats(10)
         print(s.getvalue())  # Or log to a file if preferred
 
-    def _mouse_move(self, event):
-        """
-        :param event:
-        :return:
-        Update the coordinates label and crosshairs with the current mouse position, apply paint brush if painting,
-        move point if dragging.
-        """
+    def _view_axis_index(self):
+        # im3d_crs order is (col=x, row=y, slc=z)
+        if self.view_dir == ViewDir.SAG.dir:
+            return 0  # col / x
+        if self.view_dir == ViewDir.COR.dir:
+            return 1  # row / y
+        return 2  # AX default -> slc / z
 
-        # position of the cursor in the scene (origin in upper left corner of the whole viewport scene)
-        scene_xy_qpoint = event.scenePos()
+    def _handle_out_of_bounds(self):
+        idx = int(self.image_view.currentIndex)
+        axis = self._view_axis_index()
+        bg = self.image3D_obj_stack[self.background_image_index]
 
-        # DEBUG:
-        # print(f"Scene coordinates: {scene_xy_qpoint}")
-        # print(f"drag mode: {self.drag_marker_mode}")
-
-        if self.background_image_index is None or self.image3D_obj_stack[self.background_image_index] is None:
-            # nothing to do
-            return
-
-        # use the background image to get the coordinates
-        # the background image is always the ImageView's image item
-        # ideally, this would be the high-res medical image, but user is allowed to load overlays (heatmap,
-        #   segementation, masks, etc.) without having a background layer loaded
-        img_item = self.image_view.getImageItem()  # should be same image referenced by self.background_image_index
-        data_array = self.array3D_stack[self.background_image_index]  # 3D array of data, optnly. transposed
-        background_image_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
-        if img_item is None or not img_item.sceneBoundingRect().contains(scene_xy_qpoint):
-            # outside bounds
-            self._set_coords_label(None, None, int(self.image_view.currentIndex), None)
-            self._last_mouse_inside = False
-            return
+        # Build a voxel triplet to evaluate world at:
+        # - keep last valid in-plane indices if we have them, otherwise image center
+        if self._last_valid_im3d_crs is not None:
+            base = list(self._last_valid_im3d_crs)
         else:
-            # transform the scene coordinates to 2D image coordinates (origin in lower right corner of the image)
-            # NOTE: lower RIGHT instead of lower LEFT because of the inverted x-axis
-            plot_mouse_point = img_item.mapFromScene(scene_xy_qpoint)
-            plot_x = int(plot_mouse_point.x())
-            plot_y = int(plot_mouse_point.y())
+            base = list(self._image_center_indices(bg))  # returns (col, row, slc)
 
-            # DEBUG:
-            # print(f"Plot coordinates: x: {plot_x}, y: {plot_y}")
+        base[axis] = idx
+        im3d_for_world = tuple(int(v) for v in base)
 
-            # get the voxel indices of the cursor in the 3D image data
-            # NOTE: PyQtGraph expects the first dimension of the 3D array to represent time or frames in a sequence,
-            #  but when used for static 3D volumes, it expects the first dimension to represent slices (essentially
-            #  the "depth" dimension for 3D data). So I have reshaped the 3D arrays such that the first dimension is
-            #  the z-axis, the second is the x-axis, and the third is the y-axis.
+        # Compute world, then blank two components (only keep the axis that persists)
+        world = None
+        if hasattr(bg, "voxel_to_world"):
+            try:
+                wx, wy, wz = bg.voxel_to_world(np.array(im3d_for_world))
+                all_world = (wx, wy, wz)
+                masked = [None, None, None]
+                masked[axis] = all_world[axis]  # keep only the persistent axis
+                world = tuple(masked)
+            except Exception:
+                world = None
 
-            plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
-            if plot_data_crs is None:
-                # outside bounds
-                self._set_coords_label(None, None, int(self.image_view.currentIndex), None)
-                self._last_mouse_inside = False
-                return
+        # Persist voxel coord the same way you already do
+        kwargs = dict(col=None, row=None, slc=None, world=world)
+        if axis == 0:
+            kwargs["col"] = idx
+        elif axis == 1:
+            kwargs["row"] = idx
+        else:
+            kwargs["slc"] = idx
 
-            # DEBUG:
-            # print(f"Plot data coordinates: col: {plot_data_crs[0]}, row: {plot_data_crs[1]}, slice: {plot_data_crs[2]}")
+        self._set_coords_label(**kwargs)
+        self._last_mouse_inside = False
 
-            image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
-            if image_crs is None:
-                # position is outside the image bounds, just clear the coords label
-                # outside bounds
-                self._set_coords_label(None, None, int(self.image_view.currentIndex), None)
-                self._last_mouse_inside = False
-                return
+    def _mouse_move(self, event):
+        if self.background_image_index is None:
+            return
 
-            # DEBUG:
-            # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
-            # print(f"interaction state: {self.interaction_state}")
-            # print(self.mark_im)
+        background_image_obj = self.image3D_obj_stack[self.background_image_index]
+        if background_image_obj is None:
+            return
 
-            if background_image_obj is not None and hasattr(background_image_obj, "voxel_to_world"):
-                wx, wy, wz = background_image_obj.voxel_to_world(np.array([int(image_crs[0]), int(image_crs[1]), int(image_crs[2])]))
-                self._set_coords_label(int(image_crs[0]), int(image_crs[1]), int(image_crs[2]), (wx, wy, wz))
-            else:
-                self._set_coords_label(int(image_crs[0]), int(image_crs[1]), int(image_crs[2]), None)
+        scene_xy_qpoint = event.scenePos()
+        imv_image_item = self.image_view.getImageItem()
 
-            self._last_mouse_inside = True
-            self._last_plot_x = plot_x
-            self._last_plot_y = plot_y
+        # OOB case #1: no image item or cursor not over it
+        if imv_image_item is None or not imv_image_item.sceneBoundingRect().contains(scene_xy_qpoint):
+            self._handle_out_of_bounds()
+            return
 
+        # Map to plot coords (note: x-axis inverted in your view)
+        plot_mouse_point = imv_image_item.mapFromScene(scene_xy_qpoint)
+        plot_x, plot_y = int(plot_mouse_point.x()), int(plot_mouse_point.y())
 
-            # if painting, erasing, or dragging point
-            # print(f"dragging point mode: {self.drag_marker_mode}, current point: {self.current_point}")
-            if self.interaction_state == 'painting':
-                self._apply_brush(plot_x, plot_y, True)
-            elif self.interaction_state == 'erasing':
-                self._apply_brush(plot_x, plot_y, False)
-            elif self.drag_marker_mode:
+        # Map to plot-data CRS
+        imv_image_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
+        if imv_image_crs is None:
+            # OOB case #2
+            self._handle_out_of_bounds()
+            return
 
-                # DEBUG:
-                # print("dragging marker")
+        # Map to Image3D CRS
+        im3d_crs = self.plotdatacrs_to_imagecrs(imv_image_crs[0], imv_image_crs[1], imv_image_crs[2])
+        if im3d_crs is None:
+            # OOB case #3
+            self._handle_out_of_bounds()
+            return
 
-                if self.selected_marker is not None:
-                    # dragging point
-                    self.marker_moved = True
+        # ----- In-bounds: update caches and label once -----
+        c = int(im3d_crs[0]);
+        r = int(im3d_crs[1]);
+        s = int(im3d_crs[2])
+        world = None
+        if hasattr(background_image_obj, "voxel_to_world"):
+            wx, wy, wz = background_image_obj.voxel_to_world(np.array([c, r, s]))
+            world = (wx, wy, wz)
+            self._last_valid_world = world
+        else:
+            self._last_valid_world = None
 
-                    # DEBUG:
-                    # print(f"new coords plot data: {plot_data_crs[0]}, {plot_data_crs[1]}, {plot_data_crs[2]}")
-                    # print(f"new coords image crs: {image_crs[0]}, {image_crs[1]}, {image_crs[2]}")
+        self._last_valid_im3d_crs = (c, r, s)
+        self._set_coords_label(c, r, s, world)
 
-                    self.selected_marker['plot_x'] = plot_x
-                    self.selected_marker['plot_y'] = plot_y
-                    self.selected_marker['image_col'] = image_crs[0]  # voxel index into the Image3D object
-                    self.selected_marker['image_row'] = image_crs[1]  # voxel index into the Image3D object
-                    self.selected_marker['image_slice'] = image_crs[2]  # voxel index into the Image3D object
+        self._last_mouse_inside = True
+        self._last_plot_x = plot_x
+        self._last_plot_y = plot_y
 
-                    # update the ScatterPlotItem to reflect the new position
-                    self._update_markers_display()
-
-                    # DEBUG:
-                    # print(self.selected_marker)
-
-                    self.marker_moved_signal.emit(self.selected_marker, self.id, self.view_dir)
-            else:
-                # probably panning - pass the event back to pyqtgraph for any further processing
-                self.original_mouse_move(event)
-            # else:
-            #     # position is outside the image bounds, just clear the coords label
-            #     self.coordinates_label.setText("")
+        # ----- Interactions -----
+        if self.interaction_state == 'painting':
+            self._apply_brush(plot_x, plot_y, True)
+        elif self.interaction_state == 'erasing':
+            self._apply_brush(plot_x, plot_y, False)
+        elif self.drag_marker_mode:
+            if self.selected_marker is not None:
+                self.marker_moved = True
+                self.selected_marker['plot_x'] = plot_x
+                self.selected_marker['plot_y'] = plot_y
+                self.selected_marker['image_col'] = c
+                self.selected_marker['image_row'] = r
+                self.selected_marker['image_slice'] = s
+                self._update_markers_display()
+                self.marker_moved_signal.emit(self.selected_marker, self.id, self.view_dir)
+        else:
+            self.original_mouse_move(event)
 
     def _mouse_release(self, event):
         """
@@ -1854,137 +1818,3 @@ class Viewport(QWidget):
                         # DEBUG:
                         print(f'Drag edit marker')
 
-    def export_svg(self, filename='output.svg'):
-        """Saves a PyQtGraph ImageView (base + overlay) as an SVG file."""
-
-        # Step 1: Render the ImageView to a QImage
-        size = self.image_view.size()
-        img = QImage(size.width(), size.height(), QImage.Format_ARGB32)
-        painter = QPainter(img)
-        self.image_view.render(painter)  # Capture ImageView with overlays
-        painter.end()
-
-        # Step 2: Convert the QImage to an SVG
-        svg_generator = QSvgGenerator()
-        svg_generator.setFileName(filename)
-        svg_generator.setSize(size)
-        svg_generator.setViewBox(0, 0, size.width(), size.height())
-
-        # Step 3: Draw the QImage onto the SVG
-        painter = QPainter(svg_generator)
-        painter.drawImage(0, 0, img)
-        painter.end()
-        print(f"Saved: {filename}")
-
-    # def _scatter_mouse_release(self, event):
-    #     """
-    #     When user releases mouse button on a point.
-    #     :param event:
-    #     :return:
-    #     """
-    #     # DEBUG:
-    #     print("_scatter_mouse_release")
-    #
-    #     self.drag_marker_mode = False
-
-
-    # def _point_clicked(self, scatter, clicked_points):
-    #     """
-    #     Handle point click by toggling its selected flag. Notify the parent class about the clicked point.
-    #
-    #     :param scatter: The ScatterPlotItem object. (not used)
-    #     :param clicked_points: The list of clicked points (contains instances of Point).
-    #     """
-    #     # DEBUG:
-    #     print("_point_clicked")
-    #
-    #     if not clicked_points:
-    #         return
-    #
-    #     # assume only one point can be clicked (get the first point in the list)  # FIXME: iterate through list
-    #     clicked_point = clicked_points[0]
-    #     clicked_pos = clicked_point.pos()  # Get the (x, y) position of the point
-    #     current_slice = int(self.image_view.currentIndex)
-    #
-    #     # find the clicked point by position in the slice_markers data structure
-    #     for point in self.slice_markers.get(current_slice, []):
-    #         if point['voxel_col'] == clicked_pos[0] and point['voxel_row'] == clicked_pos[1]:
-    #             point['is_selected'] = not point['is_selected']  # toggle selection
-    #             self.current_point = point
-    #         else:
-    #             point['is_selected'] = False
-    #
-    #     if self.current_point is not None:
-    #         # update the display of points
-    #         self._update_markers_display()
-    #         # notify the parent class about the selected point
-    #         self.marker_selected_signal.emit(point['id'], point['is_selected'], self.id, self.view_dir)
-
-    # def get_point_by_id_and_slice(self, point_id, slice_index):
-    #     """
-    #     Get the point with the specified ID from the specified slice.
-    #
-    #     :param point_id: str (unique ID of the point)
-    #     :param slice_index: int (slice index)
-    #     :return: dict (point data)
-    #     """
-    #     if slice_index in self.slice_markers:
-    #         return self.slice_markers[slice_index].get(point_id, None)
-    #     return None
-
-
-    # def _point_pressed(self, clicked_point, stacked_points, event):
-    #     """
-    #     :param clicked_point:
-    #     :param stacked_points:
-    #     :param event:
-    #     :return:
-    #     Handle point pressed event.
-    #     """
-    #
-    #     if self.mark_im is not None and self.mark_im.matches_event(event):
-    #         # only respond to the event if the interaction method matches (for example, shift + left click)
-    #         # DEBUG:
-    #         print("point pressed")
-    #
-    #         if self.add_marker_mode:
-    #             return
-    #
-    #         if self.pending_point_mode:
-    #             # if the point is in pending mode, then the point is being dragged to a new position
-    #             self.drag_marker_mode = True
-    #         else:
-    #             # FIXME: need to handle case where multiple points are stacked on top of each other
-    #             # if len(stacked_points) > 0:
-    #             #     # assuming only one point is clicked at a time, grab the first point
-    #             #     clicked_point = stacked_points[0]
-    #             #     slice_index = clicked_point.z
-    #             self.set_selected(clicked_point)
-    #
-    #
-    #         # DEBUG:
-    #         print(f"point clicked at position: {clicked_point.x}, {clicked_point.y}, Slice index: {clicked_point.z}")
-    #
-    #         self.drag_marker_mode = True
-    #
-    #         # emit signal to notify the parent class that a point was clicked
-    #         # TODO
-
-
-    # def create_circular_kernel(self, radius):
-    #     """Create a circular kernel with the specified radius."""
-    #     size = 2 * radius + 1  # Ensure the kernel is large enough to contain the circle
-    #     kernel = np.zeros((size, size), dtype=np.uint8)
-    #
-    #     # Calculate the center of the kernel
-    #     center = radius
-    #
-    #     # Iterate over the kernel's grid and fill in a circle
-    #     for y in range(size):
-    #         for x in range(size):
-    #             # Calculate distance from the center
-    #             distance = np.sqrt((x - center) ** 2 + (y - center) ** 2)
-    #             if distance <= radius:
-    #                 kernel[y, x] = 1
-    #
-    #     return kernel

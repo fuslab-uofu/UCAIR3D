@@ -36,7 +36,7 @@ class Image3D:
 
     Public attributes:
         parent, file_type, full_file_name, file_path, file_name, file_base_name,
-        data, canonical_data, data_type, canonical_nifti, header,
+        data, data_type, canonical_nifti, header,
         dx, dy, dz, num_rows, num_cols, num_slices, scan_direction,
         data_min, data_max, transform, x_dir, y_dir, z_dir,
         origin, resolution, shape, visible
@@ -70,7 +70,6 @@ class Image3D:
 
         # voxel data & data type
         self.data: np.ndarray | None = None
-        self.canonical_data = None  # kept for compatibility (unused)
         self.data_type = None
 
         # keep reference to canonical NiBabel image
