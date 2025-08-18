@@ -4,8 +4,8 @@ import re
 import shortuuid
 
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QHBoxLayout, QLabel, QFrame
-from PyQt5.QtGui import QFont, QPainter, QImage, QFontMetrics
-from PyQt5.QtCore import pyqtSignal, QObject, QEvent
+from PyQt5.QtGui import QFont, QPainter, QImage, QFontMetrics, QGuiApplication, QPixmap, QColor, QCursor
+from PyQt5.QtCore import pyqtSignal, QObject, QEvent, Qt
 from PyQt5.QtSvg import QSvgGenerator
 
 from ..enumerations import ViewDir
@@ -13,6 +13,34 @@ from .paint_brush import PaintBrush
 
 import cProfile, pstats, io
 from functools import wraps
+
+
+def make_green_cross_cursor(size=15, line_width=2, color=(0, 255, 0)):
+    """
+    Create a small green cross cursor.
+    :param size: total size in pixels
+    :param line_width: thickness of the cross lines
+    :param color: (R,G,B) tuple
+    :return: QCursor
+    """
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.Antialiasing, False)
+    painter.setPen(QColor(*color))
+    painter.setBrush(QColor(*color))
+
+    mid = size // 2
+    # vertical bar
+    painter.fillRect(mid - line_width // 2, 0, line_width, size, QColor(*color))
+    # horizontal bar
+    painter.fillRect(0, mid - line_width // 2, size, line_width, QColor(*color))
+
+    painter.end()
+
+    # hotspot at the center of the cross
+    return QCursor(pm, mid, mid)
 
 
 class WheelEventFilter(QObject):
@@ -38,6 +66,98 @@ class WheelEventFilter(QObject):
             self.iv.timeLine.setValue(new_value)
             return True
         return False
+
+
+
+
+
+
+
+class GlobalCtrlCursorManager(QObject):
+    """
+    Tracks Ctrl globally and applies a cursor to any registered widgets
+    while the mouse is over them. Works even when the widget doesn't have focus.
+    """
+    def __init__(self):
+        super().__init__()
+        self._ctrl_down = False
+        self._targets = []   # widgets we care about
+        # self._cursor = Qt.CrossCursor
+        self._cursor = make_green_cross_cursor(size=15, line_width=2)
+
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)  # receive global KeyPress/KeyRelease
+
+    def set_cursor_shape(self, shape: Qt.CursorShape):
+        self._cursor = shape
+        self._apply_to_all()  # refresh immediately
+
+    def add_target(self, w):
+        if w is None:
+            return
+        # Make sure we get hover events even without focus
+        w.setMouseTracking(True)
+        try:
+            w.viewport().setMouseTracking(True)  # for QGraphicsView/QAbstractScrollArea (no-op if missing)
+        except Exception:
+            pass
+        w.installEventFilter(self)
+        self._targets.append(w)
+
+    # --- internals ---
+    def _apply(self, w):
+        if self._ctrl_down and w.underMouse():
+            w.setCursor(self._cursor)
+        else:
+            w.unsetCursor()
+
+    def _apply_to_all(self):
+        for w in self._targets:
+            self._apply(w)
+
+    def eventFilter(self, obj, event):
+        et = event.type()
+
+        # 1) Global keyboard tracking (from the app)
+        if et == QEvent.KeyPress and event.key() == Qt.Key_Control:
+            if not self._ctrl_down:
+                self._ctrl_down = True
+                self._apply_to_all()
+            return False
+        if et == QEvent.KeyRelease and event.key() == Qt.Key_Control:
+            if self._ctrl_down:
+                self._ctrl_down = False
+                self._apply_to_all()
+            return False
+
+        # 2) Pointer/focus/window changes on targets
+        if obj in self._targets:
+            if et in (QEvent.Enter, QEvent.Leave, QEvent.HoverMove,
+                      QEvent.FocusIn, QEvent.FocusOut,
+                      QEvent.WindowDeactivate, QEvent.WindowActivate):
+                self._apply(obj)
+                return False
+
+            # If this is a QGraphicsView-like, also catch events on its viewport
+            try:
+                vp = obj.viewport()
+            except Exception:
+                vp = None
+            if vp is not None and obj is vp:  # event came from the viewport
+                if et in (QEvent.Enter, QEvent.Leave, QEvent.HoverMove):
+                    self._apply(obj)
+                    return False
+
+        return False
+
+
+
+
+
+
+
+
 
 
 class CustomImageView(pg.ImageView):
@@ -158,7 +278,6 @@ class Viewport(QWidget):
 
         # interactive painting
         self.is_painting = False
-        self.is_erasing = False
         self.paint_brush = PaintBrush(size=5)
 
         self.display_convention = "RAS"  # default to RAS (radiological convention) # TODO, make this an input opt.
@@ -202,6 +321,41 @@ class Viewport(QWidget):
         # the image view widget ----------
         self.image_view = pg.ImageView()
         self.image_view.setStyleSheet("border: none;")
+
+
+
+
+
+
+
+        # Ensure the ImageView can receive key events
+        self.image_view.setFocusPolicy(Qt.StrongFocus)
+
+        # Create or reuse a singleton manager (store on parent/app as convenient)
+        self._ctrl_mgr = getattr(QGuiApplication.instance(), "_global_ctrl_mgr", None)
+        if self._ctrl_mgr is None:
+            self._ctrl_mgr = GlobalCtrlCursorManager()
+            setattr(QGuiApplication.instance(), "_global_ctrl_mgr", self._ctrl_mgr)
+
+        # Register targets that the mouse can be "over"
+        self._ctrl_mgr.add_target(self.image_view)
+
+        # Register the underlying GraphicsView and its viewport so hover works even if focus doesn't
+        try:
+            gv_list = self.image_view.getView().scene().views()
+            if gv_list:
+                gv = gv_list[0]
+                gv.setFocusPolicy(Qt.StrongFocus)
+                self._ctrl_mgr.add_target(gv)
+                self._ctrl_mgr.add_target(gv.viewport())
+        except Exception:
+            pass
+
+
+
+
+
+
 
         # access the PlotItem under the time slider
         plot_item = self.image_view.ui.roiPlot  # This is the plot below the image for z/time slider
@@ -431,256 +585,6 @@ class Viewport(QWidget):
 
     def get_current_slice_index(self):
         return self.image_view.currentIndex
-
-    # markers ----------------------------------------------------------------------------------------------------------
-    def add_marker(self, image_col, image_row, image_slice, image_index, new_id=None):
-        """
-        Add a marker at the specified image3D voxel coordinates. The marker is added to the list of markers for the
-        current slice, but is not plotted until _update_markers_display() is called.
-
-        :param image_col: int
-        :param image_row: int
-        :param image_slice: int
-        :param image_index: int (index of the image in the stack)
-        :param new_id: str (optional, unique id for the new marker, for same marker id in multiple viewports [landmarks])
-        :return: new_marker: dict (marker data)
-        """
-
-        # if self.parent.debug_mode:  # print debug messages
-        #     print(f"add_marker() image_col: {image_col}, image_row: {image_row}, image_slice: {image_slice}, "
-        #           f"image_index: {image_index}")
-
-
-        new_marker = None
-
-        # FIXME: use the image specified by marker_layer_index, not necessarily the background_image_index?
-        # img_item = self.image_view.getImageItem()  # the image item of the ImageView widget
-        array3D = self.array3D_stack[image_index]  # 3D array of data, optionally transposed
-        # image3D_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
-
-        # shape is in the form (slices, cols, rows)
-        plot_data_shape = array3D.shape  # shape of the 3D array, transposed from Image3D object
-        # coordinates of marker in the 3D array used for plotting. This 3D array is transposed from the image3D object
-        # data in the sagittal and coronal cases.
-        plot_data_crs = self.imagecrs_to_plotdatacrs(image_col, image_row, image_slice)
-        if plot_data_crs is None:
-            return None
-        if (0 <= plot_data_crs[0] < plot_data_shape[1] and 0 <= plot_data_crs[1] < plot_data_shape[2] and
-            0 <= plot_data_crs[2] < plot_data_shape[0]):
-
-            # DEBUG:
-            # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
-
-            # do we have any markers on this slice yet?
-            if plot_data_crs[2] not in self.slice_markers:  # slice_markers organized by slice index of the 3D plot data
-                self.slice_markers[plot_data_crs[2]] = []
-            if new_id is not None:
-                # use the provided id
-                marker_id = new_id
-            else:
-                # create a unique id for the new  marker
-                marker_id = shortuuid.ShortUUID().random(length=8)  # short, unique, and (marginally) human-readable
-                # FIXME: check to see if this id is already in use (is that possible?)
-            # add the marker with additional metadata
-            new_marker = {
-                'id': marker_id,
-                'image_col': image_col,      # voxel index in the Image3D object data
-                'image_row': image_row,      # voxel index in the Image3D object data
-                'image_slice': image_slice,  # voxel index in the Image3D object data
-                'is_selected': False  # FIXME: might not be necessary if only one marker can be selected at a time?
-            }
-            self.slice_markers[plot_data_crs[2]].append(new_marker)
-
-        return new_marker
-
-    def select_marker(self, mkr, notify):
-        """
-        Set specified point as selected. Deselect any other point that was previously selected. Update the
-        display of points. Optionally notify the parent class.
-
-        :param mkr: dict (marker data)
-        :param notify: bool (whether to notify the parent class)
-        :return:
-        """
-        # if self.parent.debug_mode:  # print debug messages
-        #     print(f"select_marker() with marker {mkr} and notify {notify} for viewport {self.id}")
-
-        if mkr is not None:
-            if self.selected_marker is not None:
-                # deselect previously selected point
-                self.selected_marker['is_selected'] = False
-            mkr['is_selected'] = True
-            self.selected_marker = mkr
-            plot_data_crs = self.imagecrs_to_plotdatacrs(mkr['image_col'], mkr['image_row'], mkr['image_slice'])
-            if plot_data_crs is None:
-                return  # FIXME: how to handle?
-
-            self.current_slice_index = plot_data_crs[2]
-            self.goto_slice(plot_data_crs[2])  # calls refresh_preserve_extent()
-            # self.refresh_preserve_extent()
-            if notify:
-                self.marker_selected_signal.emit(mkr, self.id, self.view_dir)
-
-    def find_marker_by_id(self, point_id):
-        """
-        Find the point with the specified ID across all slices.
-
-        :param point_id: str (unique ID of the point)
-        :return: tuple (slice_index, point_data) if found, otherwise None
-        """
-
-        # if self.parent.debug_mode:  # print debug messages
-        #     print(f"find_marker_by_id() with id {point_id} for viewport {self.id}")
-
-        for slice_idx, points in self.slice_markers.items():
-            for pt in points:
-                if pt['id'] == point_id:
-                    return pt
-        return None
-
-    def delete_marker(self, marker_id):
-
-        # if self.parent.debug_mode:  # print debug messages
-        #     print(f"select_marker() with marker {marker_id} for viewport {self.id}")
-
-        for slice_idx, slice_markers in self.slice_markers.items():
-            for mk in slice_markers:
-                if mk['id'] == marker_id:
-                    slice_markers.remove(mk)
-                    self._update_markers_display()
-                    return
-
-    def delete_all_markers(self):
-        self.slice_markers = {}
-        self._update_markers_display()
-
-    def clear_selected_markers(self, notify=True):
-        """
-        Sets all points in this viewport to unselected.
-
-        :return:
-        """
-
-        # if self.parent.debug_mode:  # print debug messages
-        #     print(f"clear_selected_markers() for viewport {self.id}")
-
-        for slice_idx, points in self.slice_markers.items():
-            for pt in points:
-                pt['is_selected'] = False
-        self.selected_marker = None
-        self._update_markers_display()
-        if notify:
-            self.markers_cleared_signal.emit(self.id)
-
-    def set_add_marker_mode(self, _is_adding):
-        """Can be called by external class to toggle add_marker mode."""
-        self.add_marker_mode = _is_adding
-
-    # def set_pending_marker_mode(self, _pending):
-    #     self.pending_point_mode = _pending
-
-    def set_edit_marker_mode(self, _editing):
-        """Can be called by external class to toggle edit_marker mode."""
-        self.edit_marker_mode = _editing
-
-
-    def clear_markers(self):
-        """Remove all points from the image view."""
-        # TODO
-        pass
-
-
-    # painting ---------------------------------------------------------------------------------------------------------
-    # def toggle_painting_mode(self, which_layer, _is_painting):
-    #     """Called by external class to toggle painting mode on or off."""
-    #     # painting should only be done on the layer that is identified by which_layer
-    #     if self.image3D_obj_stack[which_layer] is None:
-    #         # TODO: raise an error or warning - no layer selected
-    #         return
-    #     self.canvas_layer_index = which_layer
-    #     self.is_painting = _is_painting
-    #
-    #     if self.is_painting:
-    #         # enable painting on this layer
-    #         self._update_canvas()
-    #         self.setCursor(QCursor(Qt.CrossCursor))
-    #     else:
-    #         # disable painting on this layer
-    #         self._disable_paint_brush(self.canvas_layer_index)
-    #         self.setCursor(QCursor(Qt.ArrowCursor))
-
-    # def clear_canvas_layer(self, _layer_idx):
-    #     """ Remove this layer index from the list of canvas layers."""
-    #     if _layer_idx in self.canvas_layer_index:
-    #         self.canvas_layer_index.remove(_layer_idx)
-    
-    def remove_canvas_label(self, _label_id):
-        """ Remove this label id from the list of labels that are allowed to be affected by painting."""
-        if _label_id in self.canvas_labels:
-            self.canvas_labels.remove(_label_id)
-
-    def set_canvas_layer_index(self, _layer_idx):
-        """ Add this layer index to the list of canvas layers. The canvas layer is the image that is being painted on."""
-        if _layer_idx < self.num_vols_allowed:
-            self.canvas_layer_index = _layer_idx
-        #TODO: warn or log
-
-    def add_canvas_label(self, _label_id):
-        """ Add this label id to the list of labels that are being painted on the canvas layer."""
-        if _label_id not in self.canvas_labels:
-            self.canvas_labels.append(_label_id)
-            
-    def update_paint_brush(self, brush):
-        """Update the paint brush settings. Called by external class to update the paint brush settings,
-        applies updated brush to current paint layer, if is_painting."""
-        self.paint_brush.set_size(brush.size)
-        self.paint_brush.set_value(brush.value)  # label id
-        self.paint_brush.set_shape(brush.shape)
-
-    def set_paint_brush_label(self, _label_id):
-        self.paint_brush.set_value(_label_id)
-    # def blend_background_with_layer(self, bg_pct, layer_idx, layer_pct):
-    #     """
-    #     Blend the current slice of the background image with the current slice of the image specified by layer_idx.
-    #     The alpha values are used to generate a weighted sum, thus resulting in an "alpha blended" image.
-    #
-    #     :param bg_pct: float (0.0 - 1.0)
-    #     :param layer_idx: index of the volume to blend with the background
-    #     :param layer_pct: float (0.0 - 1.0)
-    #     :return: 2D numpy array
-    #     """
-    #     background_image = self.image3D_obj_stack[0]
-    #     background_data = self.array3D_stack[0]
-    #     background_slice = (background_data[int(self.image_view.currentIndex), :, :]).astype(np.int32)
-    #     background_cmap = pg.colormap.get(background_image.colormap_name)
-    #     background_rgb = background_cmap.map(background_slice)
-    #
-    #     layer_image = self.image3D_obj_stack[layer_idx]
-    #     layer_data = self.array3D_stack[layer_idx]
-    #     layer_slice = (layer_data[int(self.image_view.currentIndex), :, :]).astype(np.int32)
-    #     layer_cmap = pg.colormap.get(layer_image.colormap_name)
-    #     layer_rgb = layer_cmap.map(layer_slice)
-    #     layer_image_item = self.array2D_stack[layer_idx]
-    #
-    #     # normalize the slices to 0-255
-    #     # background_norm = ((background_slice - np.min(background_slice)) / (np.max(background_slice) - np.min(background_slice))) * 255
-    #     # layer_norm = ((layer_slice - np.min(layer_slice)) / (np.max(layer_slice) - np.min(layer_slice))) * 255
-    #     background_norm = ((background_slice - np.min(background_data)) / (np.max(background_data) - np.min(background_data))) * 255
-    #     layer_norm = ((layer_slice - np.min(layer_data)) / (np.max(layer_data) - np.min(layer_data))) * 255
-    #
-    #     # slices to colormap
-    #     background_rgb = background_cmap.map(background_norm, mode='byte')
-    #     layer_rgb = layer_cmap.map(layer_norm, mode='byte')
-    #
-    #     # blend
-    #     blended_slice = bg_pct * background_slice + layer_pct * layer_slice
-    #     # blended_slice = (bg_pct * background_rgb + layer_pct * layer_rgb).astype(np.uint8)
-    #
-    #     # self.image_view.clear()
-    #     layer_image_item.setImage(blended_slice)
-    #     # layer_image_item.setImage(background_rgb)
-    #     # self.image_view.show()
-    #     # self.refresh_preserve_extent()
 
     def plotdatacr_to_plotxy(self, plot_data_col, plot_data_row):
         """
@@ -986,6 +890,262 @@ class Viewport(QWidget):
 
         return crs
 
+    def update_crosshairs(self):
+        if self.background_image_index is None:
+            # no image to display, so hide slice guides, even if visibility is set to True
+            self.horizontal_line.setVisible(False)
+            self.vertical_line.setVisible(False)
+        else:
+            self.horizontal_line.setVisible(self.show_slice_guides)
+            self.vertical_line.setVisible(self.show_slice_guides)
+            if self.show_slice_guides:
+                self.horizontal_line.setPos(self.horizontal_line_idx)
+                self.vertical_line.setPos(self.vertical_line_idx)
+
+    def export_svg(self, filename='output.svg'):
+        """Saves a PyQtGraph ImageView (base + overlay) as an SVG file."""
+
+        # Step 1: Render the ImageView to a QImage
+        size = self.image_view.size()
+        img = QImage(size.width(), size.height(), QImage.Format_ARGB32)
+        painter = QPainter(img)
+        self.image_view.render(painter)  # Capture ImageView with overlays
+        painter.end()
+
+        # Step 2: Convert the QImage to an SVG
+        svg_generator = QSvgGenerator()
+        svg_generator.setFileName(filename)
+        svg_generator.setSize(size)
+        svg_generator.setViewBox(0, 0, size.width(), size.height())
+
+        # Step 3: Draw the QImage onto the SVG
+        painter = QPainter(svg_generator)
+        painter.drawImage(0, 0, img)
+        painter.end()
+        print(f"Saved: {filename}")
+
+    # markers ----------------------------------------------------------------------------------------------------------
+    def marker_add(self, image_col, image_row, image_slice, image_index, new_id=None):
+        """
+        Add a marker at the specified image3D voxel coordinates. The marker is added to the list of markers for the
+        current slice, but is not plotted until _update_markers_display() is called.
+
+        :param image_col: int
+        :param image_row: int
+        :param image_slice: int
+        :param image_index: int (index of the image in the stack)
+        :param new_id: str (optional, unique id for the new marker, for same marker id in multiple viewports [landmarks])
+        :return: new_marker: dict (marker data)
+        """
+
+        # if self.parent.debug_mode:  # print debug messages
+        #     print(f"marker_add() image_col: {image_col}, image_row: {image_row}, image_slice: {image_slice}, "
+        #           f"image_index: {image_index}")
+
+
+        new_marker = None
+
+        # FIXME: use the image specified by marker_layer_index, not necessarily the background_image_index?
+        # img_item = self.image_view.getImageItem()  # the image item of the ImageView widget
+        array3D = self.array3D_stack[image_index]  # 3D array of data, optionally transposed
+        # image3D_obj = self.image3D_obj_stack[self.background_image_index]  # image3D object
+
+        # shape is in the form (slices, cols, rows)
+        plot_data_shape = array3D.shape  # shape of the 3D array, transposed from Image3D object
+        # coordinates of marker in the 3D array used for plotting. This 3D array is transposed from the image3D object
+        # data in the sagittal and coronal cases.
+        plot_data_crs = self.imagecrs_to_plotdatacrs(image_col, image_row, image_slice)
+        if plot_data_crs is None:
+            return None
+        if (0 <= plot_data_crs[0] < plot_data_shape[1] and 0 <= plot_data_crs[1] < plot_data_shape[2] and
+            0 <= plot_data_crs[2] < plot_data_shape[0]):
+
+            # DEBUG:
+            # print(f"Image3D coordinates: col: {image_crs[0]}, row: {image_crs[1]}, slice: {image_crs[2]}")
+
+            # do we have any markers on this slice yet?
+            if plot_data_crs[2] not in self.slice_markers:  # slice_markers organized by slice index of the 3D plot data
+                self.slice_markers[plot_data_crs[2]] = []
+            if new_id is not None:
+                # use the provided id
+                marker_id = new_id
+            else:
+                # create a unique id for the new  marker
+                marker_id = shortuuid.ShortUUID().random(length=8)  # short, unique, and (marginally) human-readable
+                # FIXME: check to see if this id is already in use (is that possible?)
+            # add the marker with additional metadata
+            new_marker = {
+                'id': marker_id,
+                'image_col': image_col,      # voxel index in the Image3D object data
+                'image_row': image_row,      # voxel index in the Image3D object data
+                'image_slice': image_slice,  # voxel index in the Image3D object data
+                'is_selected': False  # FIXME: might not be necessary if only one marker can be selected at a time?
+            }
+            self.slice_markers[plot_data_crs[2]].append(new_marker)
+
+        return new_marker
+
+    def marker_select(self, mkr, notify):
+        """
+        Set specified point as selected. Deselect any other point that was previously selected. Update the
+        display of points. Optionally notify the parent class.
+
+        :param mkr: dict (marker data)
+        :param notify: bool (whether to notify the parent class)
+        :return:
+        """
+        # if self.parent.debug_mode:  # print debug messages
+        #     print(f"marker_select() with marker {mkr} and notify {notify} for viewport {self.id}")
+
+        if mkr is not None:
+            if self.selected_marker is not None:
+                # deselect previously selected point
+                self.selected_marker['is_selected'] = False
+            mkr['is_selected'] = True
+            self.selected_marker = mkr
+            plot_data_crs = self.imagecrs_to_plotdatacrs(mkr['image_col'], mkr['image_row'], mkr['image_slice'])
+            if plot_data_crs is None:
+                return  # FIXME: how to handle?
+
+            self.current_slice_index = plot_data_crs[2]
+            self.goto_slice(plot_data_crs[2])  # calls refresh_preserve_extent()
+            # self.refresh_preserve_extent()
+            if notify:
+                self.marker_selected_signal.emit(mkr, self.id, self.view_dir)
+
+    def marker_find_by_id(self, point_id):
+        """
+        Find the point with the specified ID across all slices.
+
+        :param point_id: str (unique ID of the point)
+        :return: tuple (slice_index, point_data) if found, otherwise None
+        """
+
+        # if self.parent.debug_mode:  # print debug messages
+        #     print(f"marker_find_by_id() with id {point_id} for viewport {self.id}")
+
+        for slice_idx, points in self.slice_markers.items():
+            for pt in points:
+                if pt['id'] == point_id:
+                    return pt
+        return None
+
+    def marker_delete(self, marker_id):
+
+        # if self.parent.debug_mode:  # print debug messages
+        #     print(f"marker_select() with marker {marker_id} for viewport {self.id}")
+
+        for slice_idx, slice_markers in self.slice_markers.items():
+            for mk in slice_markers:
+                if mk['id'] == marker_id:
+                    slice_markers.remove(mk)
+                    self._update_markers_display()
+                    return
+
+    def marker_delete_all(self):
+        self.slice_markers = {}
+        self._update_markers_display()
+
+    def marker_clear_selected(self, notify=True):
+        """
+        Sets all points in this viewport to unselected.
+
+        :return:
+        """
+
+        # if self.parent.debug_mode:  # print debug messages
+        #     print(f"marker_clear_selected() for viewport {self.id}")
+
+        for slice_idx, points in self.slice_markers.items():
+            for pt in points:
+                pt['is_selected'] = False
+        self.selected_marker = None
+        self._update_markers_display()
+        if notify:
+            self.markers_cleared_signal.emit(self.id)
+
+    def marker_set_add_mode(self, _is_adding):
+        """Can be called by external class to toggle marker_add mode."""
+        self.add_marker_mode = _is_adding
+
+    # def set_pending_marker_mode(self, _pending):
+    #     self.pending_point_mode = _pending
+
+    def marker_set_edit_mode(self, _editing):
+        """Can be called by external class to toggle edit_marker mode."""
+        self.edit_marker_mode = _editing
+
+    # painting ---------------------------------------------------------------------------------------------------------
+    def paint_remove_canvas_label(self, _label_id):
+        """ Remove this label id from the list of labels that are allowed to be affected by painting."""
+        if _label_id in self.canvas_labels:
+            self.canvas_labels.remove(_label_id)
+
+    def paint_set_canvas_layer_index(self, _layer_idx):
+        """ Add this layer index to the list of canvas layers. The canvas layer is the image that is being painted on."""
+        if _layer_idx < self.num_vols_allowed:
+            self.canvas_layer_index = _layer_idx
+        #TODO: warn or log
+
+    def paint_add_canvas_label(self, _label_id):
+        """ Add this label id to the list of labels that are being painted on the canvas layer."""
+        if _label_id not in self.canvas_labels:
+            self.canvas_labels.append(_label_id)
+            
+    def paint_update_brush(self, brush):
+        """Update the paint brush settings. Called by external class to update the paint brush settings,
+        applies updated brush to current paint layer, if is_painting."""
+        self.paint_brush.set_size(brush.size)
+        self.paint_brush.set_value(brush.value)  # label id
+        self.paint_brush.set_shape(brush.shape)
+
+    def paint_set_brush_label(self, _label_id):
+        self.paint_brush.set_value(_label_id)
+
+    def paint_blend_background_with_layer(self, bg_pct, layer_idx, layer_pct):
+        pass
+    #     """
+    #     Blend the current slice of the background image with the current slice of the image specified by layer_idx.
+    #     The alpha values are used to generate a weighted sum, thus resulting in an "alpha blended" image.
+    #
+    #     :param bg_pct: float (0.0 - 1.0)
+    #     :param layer_idx: index of the volume to blend with the background
+    #     :param layer_pct: float (0.0 - 1.0)
+    #     :return: 2D numpy array
+    #     """
+    #     background_image = self.image3D_obj_stack[0]
+    #     background_data = self.array3D_stack[0]
+    #     background_slice = (background_data[int(self.image_view.currentIndex), :, :]).astype(np.int32)
+    #     background_cmap = pg.colormap.get(background_image.colormap_name)
+    #     background_rgb = background_cmap.map(background_slice)
+    #
+    #     layer_image = self.image3D_obj_stack[layer_idx]
+    #     layer_data = self.array3D_stack[layer_idx]
+    #     layer_slice = (layer_data[int(self.image_view.currentIndex), :, :]).astype(np.int32)
+    #     layer_cmap = pg.colormap.get(layer_image.colormap_name)
+    #     layer_rgb = layer_cmap.map(layer_slice)
+    #     layer_image_item = self.array2D_stack[layer_idx]
+    #
+    #     # normalize the slices to 0-255
+    #     # background_norm = ((background_slice - np.min(background_slice)) / (np.max(background_slice) - np.min(background_slice))) * 255
+    #     # layer_norm = ((layer_slice - np.min(layer_slice)) / (np.max(layer_slice) - np.min(layer_slice))) * 255
+    #     background_norm = ((background_slice - np.min(background_data)) / (np.max(background_data) - np.min(background_data))) * 255
+    #     layer_norm = ((layer_slice - np.min(layer_data)) / (np.max(layer_data) - np.min(layer_data))) * 255
+    #
+    #     # slices to colormap
+    #     background_rgb = background_cmap.map(background_norm, mode='byte')
+    #     layer_rgb = layer_cmap.map(layer_norm, mode='byte')
+    #
+    #     # blend
+    #     blended_slice = bg_pct * background_slice + layer_pct * layer_slice
+    #     # blended_slice = (bg_pct * background_rgb + layer_pct * layer_rgb).astype(np.uint8)
+    #
+    #     # self.image_view.clear()
+    #     layer_image_item.setImage(blended_slice)
+    #     # layer_image_item.setImage(background_rgb)
+    #     # self.image_view.show()
+    #     # self.refresh_preserve_extent()
+
     def refresh_preserve_extent(self):
         """
         Refresh the viewport without changing the current view extent.
@@ -1114,40 +1274,6 @@ class Viewport(QWidget):
         self.update_crosshairs()
 
         self.image_view.show()
-
-    def update_crosshairs(self):
-        if self.background_image_index is None:
-            # no image to display, so hide slice guides, even if visibility is set to True
-            self.horizontal_line.setVisible(False)
-            self.vertical_line.setVisible(False)
-        else:
-            self.horizontal_line.setVisible(self.show_slice_guides)
-            self.vertical_line.setVisible(self.show_slice_guides)
-            if self.show_slice_guides:
-                self.horizontal_line.setPos(self.horizontal_line_idx)
-                self.vertical_line.setPos(self.vertical_line_idx)
-
-    def export_svg(self, filename='output.svg'):
-        """Saves a PyQtGraph ImageView (base + overlay) as an SVG file."""
-
-        # Step 1: Render the ImageView to a QImage
-        size = self.image_view.size()
-        img = QImage(size.width(), size.height(), QImage.Format_ARGB32)
-        painter = QPainter(img)
-        self.image_view.render(painter)  # Capture ImageView with overlays
-        painter.end()
-
-        # Step 2: Convert the QImage to an SVG
-        svg_generator = QSvgGenerator()
-        svg_generator.setFileName(filename)
-        svg_generator.setSize(size)
-        svg_generator.setViewBox(0, 0, size.width(), size.height())
-
-        # Step 3: Draw the QImage onto the SVG
-        painter = QPainter(svg_generator)
-        painter.drawImage(0, 0, img)
-        painter.end()
-        print(f"Saved: {filename}")
 
     #  -----------------------------------------------------------------------------------------------------------------
     #  "Private" methods -----------------------------------------------------------------------------------------------
@@ -1447,10 +1573,10 @@ class Viewport(QWidget):
                     if plot_data_crs is not None:
                         image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
                         if image_crs is not None:
-                            new_point = self.add_marker(image_crs[0], image_crs[1], image_crs[2],
+                            new_point = self.marker_add(image_crs[0], image_crs[1], image_crs[2],
                                                         0)  # TODO: image index
                             if new_point is not None:
-                                self.select_marker(new_point, False)
+                                self.marker_select(new_point, False)
                                 self.drag_marker_mode = True
                                 self._update_markers_display()
                                 self.marker_added_signal.emit(new_point, self.id)
@@ -1458,7 +1584,7 @@ class Viewport(QWidget):
                 else:
                     # clicked while not adding → maybe deselect
                     if len(self.scatter.pointsAt(plot_xy)) == 0 and not self.edit_marker_mode:
-                        self.clear_selected_markers()
+                        self.marker_clear_selected()
                     # fall through to default PG handling
 
         if not handled:
@@ -1479,14 +1605,6 @@ class Viewport(QWidget):
         ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
         ps.print_stats(10)
         print(s.getvalue())  # Or log to a file if preferred
-
-    def _view_axis_index(self):
-        # im3d_crs order is (col=x, row=y, slc=z)
-        if self.view_dir == ViewDir.SAG.dir:
-            return 0  # col / x
-        if self.view_dir == ViewDir.COR.dir:
-            return 1  # row / y
-        return 2  # AX default -> slc / z
 
     def _handle_out_of_bounds(self):
         idx = int(self.image_view.currentIndex)
@@ -1812,7 +1930,7 @@ class Viewport(QWidget):
                     self.drag_marker_mode = True
                 else:
                     if not self.edit_marker_mode:
-                        self.select_marker(mkr, True)
+                        self.marker_select(mkr, True)
                     else:
                         self.drag_marker_mode = True
                         # DEBUG:
