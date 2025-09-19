@@ -17,7 +17,7 @@ from functools import wraps
 
 def make_green_cross_cursor(size=15, line_width=2, color=(0, 255, 0)):
     """
-    Create a small green cross cursor.
+    Change the default mouse cursor to a small green cross.
     :param size: total size in pixels
     :param line_width: thickness of the cross lines
     :param color: (R,G,B) tuple
@@ -70,12 +70,9 @@ class WheelEventFilter(QObject):
 
 
 
-
-
-
 class GlobalCtrlCursorManager(QObject):
     """
-    Tracks Ctrl globally and applies a cursor to any registered widgets
+    Tracks Ctrl key globally and applies a cursor to any registered widgets
     while the mouse is over them. Works even when the widget doesn't have focus.
     """
     def __init__(self):
@@ -248,10 +245,7 @@ class Viewport(QWidget):
         self.interaction_state = None  # implemented values: 'painting', 'erasing'
 
         # interactive point placement
-        self.add_marker_mode = False  # if adding points, are we placing a new point?
-        # self.pending_point_mode = False  # if adding points, are we waiting for the user to complete the point?
-        self.drag_marker_mode = False  # are we dragging a point to a new location?
-        self.edit_marker_mode = False  # are we editing the location of a point?
+        self.marker_mode = 'idle' # 'idle', 'adding', 'dragging'
         self.marker_moved = False
         self.selected_marker = None
         # default colors for points TODO: let parent class update these
@@ -369,6 +363,13 @@ class Viewport(QWidget):
         self.original_mouse_press = self.image_view.getView().scene().mousePressEvent
         self.original_mouse_release = self.image_view.getView().scene().mouseReleaseEvent
         self.original_mouse_move = self.image_view.getView().scene().mouseMoveEvent
+        self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
+
+
+        # vb = self.image_view.getView()
+        # self._orig_vb_mouse_move = vb.mouseMoveEvent
+        # vb.mouseMoveEvent = self._mouse_move
+
         self.image_view.getHistogramWidget().setVisible(False)
         self.image_view.ui.menuBtn.setVisible(False)  # hide these for now
         self.image_view.ui.roiBtn.setVisible(False)  # hide these for now
@@ -431,8 +432,6 @@ class Viewport(QWidget):
         self.scatter.set_mouse_press_callback(self._scatter_mouse_press)
         self.image_view.getView().addItem(self.scatter)
 
-        # connect the mouse move event to the graphics scene
-        self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
 
         # connect the mouse click event to the graphics scene
         # optionally, profile this slot by wrapping it in the profiler
@@ -443,6 +442,9 @@ class Viewport(QWidget):
 
         # connect the mouse release event to the graphics scene
         self.image_view.getView().scene().mouseReleaseEvent = self._mouse_release
+
+        # connect the mouse move event to the graphics scene
+        self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
 
         # when the timeLine position changes, update the overlays
         self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
@@ -925,7 +927,7 @@ class Viewport(QWidget):
         print(f"Saved: {filename}")
 
     # markers ----------------------------------------------------------------------------------------------------------
-    def marker_add(self, image_col, image_row, image_slice, image_index, new_id=None):
+    def add_marker(self, image_col, image_row, image_slice, image_index, new_id=None):
         """
         Add a marker at the specified image3D voxel coordinates. The marker is added to the list of markers for the
         current slice, but is not plotted until _update_markers_display() is called.
@@ -939,7 +941,7 @@ class Viewport(QWidget):
         """
 
         # if self.parent.debug_mode:  # print debug messages
-        #     print(f"marker_add() image_col: {image_col}, image_row: {image_row}, image_slice: {image_slice}, "
+        #     print(f"add_marker() image_col: {image_col}, image_row: {image_row}, image_slice: {image_slice}, "
         #           f"image_index: {image_index}")
 
 
@@ -1065,15 +1067,22 @@ class Viewport(QWidget):
             self.markers_cleared_signal.emit(self.id)
 
     def marker_set_add_mode(self, _is_adding):
-        """Can be called by external class to toggle marker_add mode."""
-        self.add_marker_mode = _is_adding
+        """Can be called by external class to toggle marker add mode."""
+        if _is_adding:
+            self.marker_mode = 'adding'
+        else:
+            self.marker_mode = 'idle'
+
 
     # def set_pending_marker_mode(self, _pending):
     #     self.pending_point_mode = _pending
 
-    def marker_set_edit_mode(self, _editing):
-        """Can be called by external class to toggle edit_marker mode."""
-        self.edit_marker_mode = _editing
+    # def marker_set_edit_mode(self, _editing):
+    #     """Can be called by external class to toggle edit_marker mode."""
+    #     if _editing:
+    #         self.marker_mode = 'edit'
+    #     else:
+    #         self.marker_mode = 'idle'
 
     # painting ---------------------------------------------------------------------------------------------------------
     def paint_remove_canvas_label(self, _label_id):
@@ -1393,7 +1402,7 @@ class Viewport(QWidget):
                             self._set_coords_label(int(img[0]), int(img[1]), int(img[2]), None)
         else:
             # outside image bounds, so just update the slice index
-            self._handle_out_of_bounds()
+            self._handle_out_of_bounds_persistent_label()
 
         self.slice_changed_signal.emit(self.id, self.current_slice_index)
 
@@ -1541,59 +1550,6 @@ class Viewport(QWidget):
     #     # self._set_histogram_colormap(self.image3D_obj_stack[self.active_image_index].colormap)
     #     self.opacity_slider.setVisible(not is_visible)
 
-    def _mouse_press(self, event):
-        """
-        Capture mouse press and handle painting/point actions before passing to pyqtgraph as needed.
-        """
-        img_item = self.image_view.getImageItem()
-        if img_item is None:
-            return
-
-        handled = False
-
-        scene_xy = event.scenePos()
-        plot_xy = img_item.mapFromScene(scene_xy)
-
-        if img_item.sceneBoundingRect().contains(scene_xy):
-            # painting / erasing
-            if self.paint_im is not None and self.paint_im.matches_event(event):
-                self.interaction_state = 'painting'
-                self._mouse_move(event)  # apply immediately
-                handled = True
-            elif self.erase_im is not None and self.erase_im.matches_event(event):
-                self.interaction_state = 'erasing'
-                self._mouse_move(event)
-                handled = True
-            # markers
-            elif self.mark_im is not None and self.mark_im.matches_event(event):
-                if self.add_marker_mode:  # add a new marker at click
-                    plot_x = int(plot_xy.x())
-                    plot_y = int(plot_xy.y())
-                    plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
-                    if plot_data_crs is not None:
-                        image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
-                        if image_crs is not None:
-                            new_point = self.marker_add(image_crs[0], image_crs[1], image_crs[2],
-                                                        0)  # TODO: image index
-                            if new_point is not None:
-                                self.marker_select(new_point, False)
-                                self.drag_marker_mode = True
-                                self._update_markers_display()
-                                self.marker_added_signal.emit(new_point, self.id)
-                                handled = True
-                else:
-                    # clicked while not adding → maybe deselect
-                    if len(self.scatter.pointsAt(plot_xy)) == 0 and not self.edit_marker_mode:
-                        self.marker_clear_selected()
-                    # fall through to default PG handling
-
-        if not handled:
-            # pass the event back to pyqtgraph for any further processing
-            self.original_mouse_press(event)
-
-    def _mouse_press_wrapper(self, event):
-        self._profile_method(self._mouse_press, event)
-
     def _profile_method(self, method, *args, **kwargs):
         profiler = cProfile.Profile()
         profiler.enable()
@@ -1606,7 +1562,7 @@ class Viewport(QWidget):
         ps.print_stats(10)
         print(s.getvalue())  # Or log to a file if preferred
 
-    def _handle_out_of_bounds(self):
+    def _handle_out_of_bounds_persistent_label(self):
         idx = int(self.image_view.currentIndex)
         axis = self._view_axis_index()
         bg = self.image3D_obj_stack[self.background_image_index]
@@ -1645,76 +1601,204 @@ class Viewport(QWidget):
         self._set_coords_label(**kwargs)
         self._last_mouse_inside = False
 
+    def _scatter_mouse_press(self, evt, mkr):
+        """
+        When user clicks on a marker. If the marker is not already selected, select it. If the marker
+        is already selected, allow it to be dragged to a new position.
+
+        :param evt: the clicking on a marker event
+        :param mkr: the marker that was clicked
+        :return:
+        """
+        if self.mark_im is not None and self.mark_im.matches_event(evt):
+            # only respond to the event if the interaction method matches (for example, shift + left click)
+            if mkr is not None:
+                if not mkr.get('is_selected'):
+                    self.marker_select(mkr, True)
+
+                self.marker_mode = 'dragging'
+
+    def _mouse_press_wrapper(self, event):
+        self._profile_method(self._mouse_press, event)
+
+    def _mouse_press(self, event):
+        """
+        Capture mouse press and handle painting/point actions before passing to pyqtgraph as needed.
+        """
+        img_item = self.image_view.getImageItem()
+        if img_item is None:
+            return
+
+        handled = False
+
+        scene_xy = event.scenePos()
+        plot_xy = img_item.mapFromScene(scene_xy)
+
+        if img_item.sceneBoundingRect().contains(scene_xy):
+            # painting / erasing
+            if self.paint_im is not None and self.paint_im.matches_event(event):
+                self.interaction_state = 'painting'
+                self._mouse_move(event)  # apply immediately
+                handled = True
+            elif self.erase_im is not None and self.erase_im.matches_event(event):
+                self.interaction_state = 'erasing'
+                self._mouse_move(event)
+                handled = True
+            # markers
+            elif self.mark_im is not None and self.mark_im.matches_event(event):
+                if self.marker_mode == 'adding':
+                    plot_x = int(plot_xy.x())
+                    plot_y = int(plot_xy.y())
+                    plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
+                    if plot_data_crs is not None:
+                        image_crs = self.plotdatacrs_to_imagecrs(plot_data_crs[0], plot_data_crs[1], plot_data_crs[2])
+                        if image_crs is not None:
+                            new_point = self.add_marker(image_crs[0], image_crs[1], image_crs[2],
+                                                        0)  # TODO: image index
+                            if new_point is not None:
+                                self.marker_select(new_point, False)
+                                self.marker_mode = 'dragging'
+                                self._update_markers_display()
+                                self.marker_added_signal.emit(new_point, self.id)
+                                handled = True
+                else:
+                    # clicked while not adding but still in marker interaction state → maybe deselect
+                    if len(self.scatter.pointsAt(plot_xy)) == 0:
+                        self.marker_clear_selected()
+                    # fall through to default PG handling
+
+        if not handled:
+            # pass the event back to pyqtgraph for any further processing
+            self.original_mouse_press(event)
+
     def _mouse_move(self, event):
+        # -------- guards & setup -------------------------------------------------
         if self.background_image_index is None:
-            return
+            # Still let the default ViewBox behavior run for panning/zoom, etc.
+            return self.original_mouse_move(event)
 
-        background_image_obj = self.image3D_obj_stack[self.background_image_index]
-        if background_image_obj is None:
-            return
+        bg = self.image3D_obj_stack[self.background_image_index]
+        if bg is None:
+            return self.original_mouse_move(event)
 
-        scene_xy_qpoint = event.scenePos()
-        imv_image_item = self.image_view.getImageItem()
+        # NEW guard: if left button pressed and not in marker drag mode, skip coords
+        if (event.buttons() & Qt.LeftButton) and self.marker_mode != 'dragging':
+            # let ViewBox handle panning/zoom/etc., but do not update coords
+            return self.original_mouse_move(event)
 
-        # OOB case #1: no image item or cursor not over it
-        if imv_image_item is None or not imv_image_item.sceneBoundingRect().contains(scene_xy_qpoint):
-            self._handle_out_of_bounds()
-            return
+        # Ensure we get move events even without a button pressed (usually true, but harmless)
+        try:
+            self.image_view.getView().setMouseTracking(True)
+            self.image_view.getView().viewport().setMouseTracking(True)
+        except Exception:
+            pass
 
-        # Map to plot coords (note: x-axis inverted in your view)
-        plot_mouse_point = imv_image_item.mapFromScene(scene_xy_qpoint)
-        plot_x, plot_y = int(plot_mouse_point.x()), int(plot_mouse_point.y())
+        # Lazy init throttling state (~60 FPS)
+        if not hasattr(self, "_drag_hz_timer"):
+            from PyQt5 import QtCore
+            self._drag_hz_timer = QtCore.QElapsedTimer()
+            self._drag_hz_timer.start()
+            self._drag_throttle_ms = 16  # ~60 Hz
 
-        # Map to plot-data CRS
-        imv_image_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
-        if imv_image_crs is None:
-            # OOB case #2
-            self._handle_out_of_bounds()
-            return
+        do_heavy = self._drag_hz_timer.elapsed() >= getattr(self, "_drag_throttle_ms", 16)
 
-        # Map to Image3D CRS
-        im3d_crs = self.plotdatacrs_to_imagecrs(imv_image_crs[0], imv_image_crs[1], imv_image_crs[2])
+        # -------- hit testing & mapping -----------------------------------------
+        scene_xy = event.scenePos()
+        imv_item = self.image_view.getImageItem()
+
+        # Quick OOB: no image or pointer not over the image item in scene coords
+        if imv_item is None or not imv_item.sceneBoundingRect().contains(scene_xy):
+            # Keep coord label "persistent" with last valid voxel & world (blanks 2 components)
+            if do_heavy:
+                self._handle_out_of_bounds_persistent_label()
+                self._drag_hz_timer.restart()
+            # Pass through to original behavior (keeps default hover/pan UX intact)
+            return self.original_mouse_move(event)
+
+        # Map scene -> item (plot) space
+        plot_pt = imv_item.mapFromScene(scene_xy)
+        plot_x, plot_y = int(plot_pt.x()), int(plot_pt.y())
+
+        # Pixel de-dup: if we haven't moved to a new plot pixel, only do throttled label tick / brush flow
+        same_pixel = (getattr(self, "_last_plot_x", None) == plot_x and
+                      getattr(self, "_last_plot_y", None) == plot_y)
+
+        # Map plot -> plot-data CRS (x,y,slice) and then -> image (c,r,s)
+        imv_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
+        if imv_crs is None:
+            if do_heavy:
+                self._handle_out_of_bounds_persistent_label()
+                self._drag_hz_timer.restart()
+            return self.original_mouse_move(event)
+
+        im3d_crs = self.plotdatacrs_to_imagecrs(imv_crs[0], imv_crs[1], imv_crs[2])
         if im3d_crs is None:
-            # OOB case #3
-            self._handle_out_of_bounds()
-            return
+            if do_heavy:
+                self._handle_out_of_bounds_persistent_label()
+                self._drag_hz_timer.restart()
+            return self.original_mouse_move(event)
 
-        # ----- In-bounds: update caches and label once -----
-        c = int(im3d_crs[0]);
-        r = int(im3d_crs[1]);
-        s = int(im3d_crs[2])
+        c, r, s = int(im3d_crs[0]), int(im3d_crs[1]), int(im3d_crs[2])
+
+        # -------- coordinate label + world conversion ---------------------------
+        # ---- Throttle heavy conversions/label updates to ~60 Hz ----
+        do_heavy = self._drag_hz_timer.elapsed() >= getattr(self, "_drag_throttle_ms", 16)
         world = None
-        if hasattr(background_image_obj, "voxel_to_world"):
-            wx, wy, wz = background_image_obj.voxel_to_world(np.array([c, r, s]))
-            world = (wx, wy, wz)
-            self._last_valid_world = world
-        else:
-            self._last_valid_world = None
+        if do_heavy and hasattr(bg, "voxel_to_world"):
+            try: # Avoid small numpy allocations in hot path (tuple->list->array is cheap enough)
+                wx, wy, wz = bg.voxel_to_world(np.array([c, r, s], dtype=np.int32))
+                world = (wx, wy, wz)
+                self._last_valid_world = world
+            except Exception:
+                self._last_valid_world = None
+        # else: keep previous world to avoid churn # Note: coords label only needs throttled refresh
+        if do_heavy:
+            self._set_coords_label(c, r, s, world)
+            self._drag_hz_timer.restart()
 
-        self._last_valid_im3d_crs = (c, r, s)
-        self._set_coords_label(c, r, s, world)
-
+        # Cache last inside position/voxel for persistence & dedup
         self._last_mouse_inside = True
-        self._last_plot_x = plot_x
-        self._last_plot_y = plot_y
+        self._last_plot_x, self._last_plot_y = plot_x, plot_y
+        self._last_valid_im3d_crs = (c, r, s)
 
-        # ----- Interactions -----
+        # -------- interaction handling ------------------------------------------
+        # Brush flow should not be blocked by pixel dedup (continuous stroke)
         if self.interaction_state == 'painting':
             self._apply_brush(plot_x, plot_y, True)
-        elif self.interaction_state == 'erasing':
+            return
+        if self.interaction_state == 'erasing':
             self._apply_brush(plot_x, plot_y, False)
-        elif self.drag_marker_mode:
-            if self.selected_marker is not None:
-                self.marker_moved = True
-                self.selected_marker['plot_x'] = plot_x
-                self.selected_marker['plot_y'] = plot_y
-                self.selected_marker['image_col'] = c
-                self.selected_marker['image_row'] = r
-                self.selected_marker['image_slice'] = s
-                self._update_markers_display()
-                self.marker_moved_signal.emit(self.selected_marker, self.id, self.view_dir)
-        else:
-            self.original_mouse_move(event)
+            return
+
+        # Fast path for marker drag (rate-limited signal emission)
+        if self.marker_mode == 'dragging' and (self.selected_marker is not None):
+            sm = self.selected_marker
+            self.marker_moved = True
+
+            # Update data model
+            sm['plot_x'] = plot_x
+            sm['plot_y'] = plot_y
+            sm['image_col'] = c
+            sm['image_row'] = r
+            sm['image_slice'] = s
+
+            # Update graphics item if present
+            gi = sm.get('graphics_item', None)
+            if gi is not None and hasattr(gi, 'setPos'):
+                gi.setPos(plot_x, plot_y)
+            else:
+                if hasattr(self, "_update_selected_marker_item_fast"):
+                    self._update_selected_marker_item_fast(sm)
+                elif do_heavy:
+                    self._update_markers_display()
+
+            if do_heavy:
+                self.marker_moved_signal.emit(sm, self.id, self.view_dir)
+
+            return
+
+        # Default pass-through so ViewBox pans/zooms/ROIs continue to work
+        return self.original_mouse_move(event)
 
     def _mouse_release(self, event):
         """
@@ -1725,13 +1809,9 @@ class Viewport(QWidget):
         # DEBUG:
         # print("_mouse_release")
 
-        self.interaction_state = None
-        self.drag_marker_mode = False
-
-        # notify parent that point was moved
-        # if self.selected_marker is not None and self.marker_moved:
-        #     self.marker_moved = False
-        #     self.marker_moved_signal.emit(self.selected_marker, self.id, self.view_dir)
+        # self.interaction_state = None
+        if self.mark_im is not None and self.mark_im.matches_event(event):
+            self.marker_mode = 'idle'
 
         # pass event back to pyqtgraph for any further processing
         self.original_mouse_release(event)
@@ -1891,8 +1971,6 @@ class Viewport(QWidget):
         current_slice = int(self.image_view.currentIndex)
         markers = self.slice_markers.get(current_slice, [])
 
-        # print(markers)
-
         # update ScatterPlotItem
         spots = []
         if len(markers) > 0:
@@ -1908,31 +1986,11 @@ class Viewport(QWidget):
                         'pos': (plot_xy[0], plot_xy[1]), 'data': marker,
                         'brush': self.selected_brush if marker['is_selected'] else self.idle_brush,
                     } )
+
             # FIXME: testing and debugging
             # print(f"spots: {spots}")
+
             self.scatter.setData(spots=spots)
         else:
             self.scatter.clear()
-
-    def _scatter_mouse_press(self, evt, mkr):
-        """
-        When user clicks on a marker. If the marker is not already selected, select it. If the marker
-        is already selected, allow it to be dragged to a new position.
-
-        :param evt: the clicking on a marker event
-        :param mkr: the marker that was clicked
-        :return:
-        """
-        if self.mark_im is not None and self.mark_im.matches_event(evt):
-            # only respond to the event if the interaction method matches (for example, shift + left click)
-            if mkr is not None:
-                if mkr.get('is_selected'):  # and self.edit_marker_mode:
-                    self.drag_marker_mode = True
-                else:
-                    if not self.edit_marker_mode:
-                        self.marker_select(mkr, True)
-                    else:
-                        self.drag_marker_mode = True
-                        # DEBUG:
-                        print(f'Drag edit marker')
 
