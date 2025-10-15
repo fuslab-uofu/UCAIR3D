@@ -3,13 +3,9 @@
 
     UCAIR3D App, 2023–2025
     Michelle Kline, Department of Radiology and Imaging Sciences, University of Utah
-    SeyyedKazem HashemizadehKolowri, PhD, Department of Radiology and Imaging Sciences, University of Utah
 
     Notes
     -----
-    This refactor keeps the public API and attributes intact while consolidating
-    duplicate orientation logic, adding small helpers, and documenting data order.
-
     Data order (after canonicalization):
         self.data has shape (C, R, S) == (x, y, z)
         where x = columns (left→right), y = rows (top→bottom), z = slices
@@ -21,6 +17,8 @@ from __future__ import annotations
 import os
 import numpy as np
 import nibabel as nib
+import uuid
+import datetime
 try:
     import pyqtgraph as pg
 except Exception:
@@ -53,8 +51,6 @@ class Image3D:
 
     Private helpers (API-neutral):
         _slice_2d(view, index)
-        _clamp_index(axis_len, idx)
-        _clamp_voxel(r, c, p)
         voxel_to_world(ijk)
         world_to_voxel(xyz)
     """
@@ -99,31 +95,21 @@ class Image3D:
 
         self.visible = True
 
-        # --- add: UI/display defaults used by Viewport ---
-        # Window/level range to display (fallback to data_min/max when set later)
-        self.display_min = None  # float | None
-        self.display_max = None  # float | None
-        # Overall opacity and clipping behavior
-        self.alpha = 1.0  # 0.0..1.0
-        self.clipping = False  # if True, outside [display_min, display_max] is transparent
-        # Default colormap: CET-L1 if available, else gray
-        if pg is not None and hasattr(pg, "colormap"):
-            try:
-                self.colormap = pg.colormap.get("CET-L1")
-            except Exception:
-                self.colormap = pg.colormap.get("gray")
-        else:
-            self.colormap = None  # Viewport will still run; you can set later if pg isn’t present
-
     # ---------------------------------------------------------------------
     # Loading / population
     # ---------------------------------------------------------------------
     def populate_with_dicom(self, datasets, dataset_name, is_enhanced: bool = False):
         """Populate from a DICOM series (not yet implemented in this version)."""
         # Placeholder to preserve API; implement as needed
+        # Record provenance source metadata even though data loading is TBD.
+        self.provenance["source"] = {
+                   "type": "dicom",
+                   "series_name": dataset_name,
+                   "enhanced": bool(is_enhanced),
+        }
         pass
 
-    def populate_with_nifti(self, nifti_image, full_path_name, base_name=None):
+    def populate_with_nifti(self, nifti_image, full_path_name, base_name=None, convention='RAS'):
         """
         Populate from a NIfTI image using NiBabel.
 
@@ -140,7 +126,12 @@ class Image3D:
         # as_closest_canonical() will flip and/or permute axes to match this convention.
         # The affine transform will be adjusted accordingly.
         # There is no resampling or data type conversion here; the original data type is preserved.
+
+        # TODO: support other conventions if needed
+        # if convention == 'RAS':
         self.canonical_nifti = nib.as_closest_canonical(nifti_image)
+        # else:
+        #     pass
 
         # Load voxel data eagerly for interactive use; preserve on-disk dtype
         self.data = np.asanyarray(self.canonical_nifti.dataobj).astype(nifti_image.header.get_data_dtype())
@@ -180,8 +171,6 @@ class Image3D:
         self.resolution = [self.dx, self.dy, self.dz]
         self.shape = [int(s) for s in self.data.shape]
 
-        if self.display_min is None: self.display_min = self.data_min
-        if self.display_max is None: self.display_max = self.data_max
 
     # ---------------------------------------------------------------------
     # Slice extraction (public API preserved)
@@ -357,3 +346,33 @@ class Image3D:
         else:
             xyz = None
         return xyz
+
+    # # ---------------------------------------------------------------------
+    # # Internal ID / provenance helpers (new; side-effect free)
+    # # ---------------------------------------------------------------------
+    # def get_internal_id(self) -> str:
+    #     """Return this image's opaque internal UUID string."""
+    #     return self.uid
+    #
+    # def renew_internal_id(self, *, reason: str | None = None) -> str:
+    #     """
+    #     Assign a brand-new internal id. Use when creating a logically new
+    #     Image3D object by duplication or derivation (e.g., deep copy, resample).
+    #     """
+    #     self.uid = str(uuid.uuid4())
+    #     # Optionally annotate the provenance that the id changed (purely informational).
+    #     changes = self.provenance.setdefault("id_changes", [])
+    #     changes.append({
+    #         "new_uid": self.uid,
+    #         "changed_utc": datetime.datetime.utcnow().isoformat() + "Z",
+    #         "reason": reason,
+    #     })
+    #     return self.uid
+    #
+    # def set_parent_uid(self, parent_uid: str | None):
+    #     """Record the uid of the source Image3D when this object is derived."""
+    #     self.provenance["derived_from"] = parent_uid
+    #
+    # def provenance_snapshot(self) -> dict:
+    #     """Return a shallow copy of the current provenance for serialization."""
+    #     return dict(self.provenance)

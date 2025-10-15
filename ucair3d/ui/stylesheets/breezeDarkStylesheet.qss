@@ -729,77 +729,6 @@ QDialog QToolBar QToolButton[popupMode="2"]
     padding-right: 0.7em;
 }
 
-QPushButton
-{
-    color: #eff0f1;
-	background-color: rgba(61, 173, 232, 0.1);
-    border: 0.04em solid #76797c;
-    padding: 0.23em;
-    border-radius: 2px;
-    outline: none;
-    max-height: 24px;
-}
-
-QPushButton:flat,
-QPushButton:flat:hover
-{
-    border: 0.04em transparent #76797c;
-}
-
-QComboBox:open,
-QPushButton:open
-{
-    border-width: 0.04em;
-    border-color: #76797c;
-}
-
-QComboBox:closed,
-QPushButton:closed
-{
-    border-width: 0.04em;
-    border-color: #76797c;
-}
-
-QPushButton:disabled
-{
-    background-color: #31363B;
-    border-width: 0.04em;
-    border-color: #76797c;
-    border-style: solid;
-    padding-top: 0.23em;
-    padding-bottom: 0.23em;
-    padding-left: 1ex;
-    padding-right: 1ex;
-    border-radius: 2px;
-    color: #454545;
-}
-
-QPushButton:checked:disabled
-{
-    background-color: #31363B;
-    border-width: 0.04em;
-    border-color: #76797c;
-    border-style: solid;
-    padding-top: 0.23em;
-    padding-bottom: 0.23em;
-    padding-left: 1ex;
-    padding-right: 1ex;
-    border-radius: 2px;
-    color: #454545;
-}
-
-QPushButton:focus
-{
-    color: #eff0f1;
-}
-
-QPushButton:pressed
-{
-    background-color: #454a4f;
-    padding-top: -0.65em;
-    padding-bottom: -0.74em;
-    color: #eff0f1;
-}
 
 QComboBox
 {
@@ -813,26 +742,7 @@ QComboBox:editable
     background-color: #1D2023;
 }
 
-QPushButton:checked
-{
-    background-color: #447CF9;
-    border: 0.04em solid #447CF9;
-    color: #eff0f1;
-}
 
-QPushButton:hover
-{
-    background-color: #31363B;
-    border: 0.04em solid #447CF9;
-    color: #EFF0F1;
-}
-
-QPushButton:checked:hover
-{
-    background-color: #31363B;
-    border: 0.04em solid #447CF9;
-    color: #EFF0F1;
-}
 
 QComboBox:hover,
 QComboBox:focus,
@@ -851,6 +761,7 @@ QTreeView:focus
     border: 0.04em solid #447CF9;
     color: #eff0f1;
 }
+
 
 QComboBox:hover:pressed:!editable,
 QPushButton:hover:pressed,
@@ -1220,6 +1131,9 @@ QTabWidget::pane:right
     border: 0.04em solid #76797c;
     right: -0.04em;
 }
+
+
+
 
 QTabBar
 {
@@ -2286,12 +2200,6 @@ QDialogButtonBox
 }
 
 /* Set some styles for these custom dialog buttons */
-QDialogButtonBox QPushButton,
-QMessageBox QPushButton
-{
-    min-height: 1.1em;
-    min-width: 5em;
-}
 
 /**
  *  Special rules for creating a custom titlebar. This can only work
@@ -2347,4 +2255,109 @@ QFrame[frameShape][isWindow="true"][windowFrame="5"]
 {
     border: 5px solid #2c3034;
     border-radius: 3px;
+}
+
+QPushButton
+{
+    color: #eff0f1;
+	background-color: rgba(61, 173, 232, 0.1);
+    border: 0.04em solid #76797c;
+    padding: 0.23em;
+    border-radius: 2px;
+    outline: none;
+}
+
+QPushButton:flat,
+QPushButton:flat:hover
+{
+    border: 0.04em transparent #76797c;
+}
+
+QComboBox:open,
+QPushButton:open
+{
+    border-width: 0.04em;
+    border-color: #76797c;
+}
+
+QComboBox:closed,
+QPushButton:closed
+{
+    border-width: 0.04em;
+    border-color: #76797c;
+}
+
+QPushButton:disabled
+{
+    background-color: #31363B;
+    border-width: 0.04em;
+    border-color: #76797c;
+    border-style: solid;
+    padding-top: 0.23em;
+    padding-bottom: 0.23em;
+    padding-left: 1ex;
+    padding-right: 1ex;
+    border-radius: 2px;
+    color: #454545;
+	
+}
+
+QPushButton:checked:disabled
+{
+    background-color: #31363B;
+    border-width: 0.04em;
+    border-color: #76797c;
+    border-style: solid;
+    padding-top: 0.23em;
+    padding-bottom: 0.23em;
+    padding-left: 1ex;
+    padding-right: 1ex;
+    border-radius: 2px;
+    color: #454545;
+}
+
+QPushButton:focus
+{
+    color: #eff0f1;
+}
+
+QPushButton:pressed
+{
+    background-color: #454a4f;
+    padding-top: -0.65em;
+    padding-bottom: -0.74em;
+    color: #eff0f1;
+}
+
+QPushButton:checked
+{
+    background-color: #447CF9;
+    border: 0.04em solid #447CF9;
+    color: #eff0f1;
+}
+
+QPushButton:hover
+{
+    background-color: #31363B;
+    border: 0.04em solid #447CF9;
+    color: #EFF0F1;
+}
+
+QPushButton:checked:hover
+{
+    background-color: #31363B;
+    border: 0.04em solid #447CF9;
+    color: #EFF0F1;
+}
+
+/* Highlight when controller sets active-combo=true */
+QComboBox[active-combo="true"] {
+    border: 2px solid #447CF9;      /* or your selected-marker green */
+    border-radius: 2px;
+    padding: 2px 6px;                /* keep text from touching the border */
+}
+
+/* Optional: stronger when focused */
+QComboBox[active-combo="true"]:focus {
+    border-width: 3px;
 }

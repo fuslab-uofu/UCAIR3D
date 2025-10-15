@@ -149,14 +149,6 @@ class GlobalCtrlCursorManager(QObject):
         return False
 
 
-
-
-
-
-
-
-
-
 class CustomImageView(pg.ImageView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -248,6 +240,7 @@ class Viewport(QWidget):
         self.marker_mode = 'idle' # 'idle', 'adding', 'dragging'
         self.marker_moved = False
         self.selected_marker = None
+        self._marker_counter = 0
         # default colors for points TODO: let parent class update these
         self.idle_marker_color = (255, 0, 0, 255)  # red
         self.selected_marker_color = (0, 255, 0, 255)  # green
@@ -290,7 +283,7 @@ class Viewport(QWidget):
         coords_frame.setStyleSheet("background-color: #000000;")
         coords_frame.setStyleSheet(f"QFrame#coords_frame {{border: none;}}")
         self.coordinates_label = QLabel("", self)
-        font = QFont("Courier New", 7)  # use a monospaced font for better alignment
+        font = QFont("Courier New", 8)  # use a monospaced font for better alignment
         self.coordinates_label.setFont(font)
         # one‑decimal world format; this string defines the numeric field width
         world_sample = "-000.0"  # ← change this once if you ever need wider fields
@@ -316,12 +309,6 @@ class Viewport(QWidget):
         self.image_view = pg.ImageView()
         self.image_view.setStyleSheet("border: none;")
 
-
-
-
-
-
-
         # Ensure the ImageView can receive key events
         self.image_view.setFocusPolicy(Qt.StrongFocus)
 
@@ -345,12 +332,6 @@ class Viewport(QWidget):
         except Exception:
             pass
 
-
-
-
-
-
-
         # access the PlotItem under the time slider
         plot_item = self.image_view.ui.roiPlot  # This is the plot below the image for z/time slider
         # access the bottom axis
@@ -364,11 +345,6 @@ class Viewport(QWidget):
         self.original_mouse_release = self.image_view.getView().scene().mouseReleaseEvent
         self.original_mouse_move = self.image_view.getView().scene().mouseMoveEvent
         self.image_view.getView().scene().mouseMoveEvent = self._mouse_move
-
-
-        # vb = self.image_view.getView()
-        # self._orig_vb_mouse_move = vb.mouseMoveEvent
-        # vb.mouseMoveEvent = self._mouse_move
 
         self.image_view.getHistogramWidget().setVisible(False)
         self.image_view.ui.menuBtn.setVisible(False)  # hide these for now
@@ -508,11 +484,6 @@ class Viewport(QWidget):
                 # DEBUG:
                 # print(f"3D array shape: {self.array3D_stack[stack_position].shape}")
 
-                # ratio = float(im3Dobj.dz / im3Dobj.dy)
-
-            # set the aspect ratio of the image view to match this new image
-            # FIXME: is there a better way to do this? Should this be done in refresh()?
-            # self.image_view.getView().setAspectLocked(True, ratio=ratio)
             # start at middle slice
             self.current_slice_index = (int(self.array3D_stack[stack_position].shape[0] // 2))
 
@@ -547,17 +518,6 @@ class Viewport(QWidget):
                     self.current_slice_index = slice_index
                     self.refresh_preserve_extent()
                     # self.refresh()
-
-    # def remove_layer(self, stack_position):
-    #     # FIXME: this wipes out the image3D object! That is not what we want to do
-    #     self.image3D_obj_stack[stack_position] = None
-    #
-    #     self.array3D_stack[stack_position] = None
-    #     # self.array2D_stack[stack_position].clear()
-    #     self.array2D_stack[stack_position] = None
-    #     if stack_position in self.canvas_layer_index:
-    #         self.clear_canvas_layer(stack_position)
-    #     self.refresh()
 
     def hide_layer(self, stack_position):
         if self.image3D_obj_stack[stack_position] is None:
@@ -972,9 +932,12 @@ class Viewport(QWidget):
                 # use the provided id
                 marker_id = new_id
             else:
-                # create a unique id for the new  marker
-                marker_id = shortuuid.ShortUUID().random(length=8)  # short, unique, and (marginally) human-readable
-                # FIXME: check to see if this id is already in use (is that possible?)
+                # # create a unique id for the new  marker
+                # marker_id = shortuuid.ShortUUID().random(length=8)  # short, unique, and (marginally) human-readable
+                # # FIXME: check to see if this id is already in use (is that possible?)
+                # Create a simple sequential ID, like "LM_1", "LM_2", etc.
+                self._marker_counter += 1
+                marker_id = f"MK_{self.id}_{self._marker_counter}"
             # add the marker with additional metadata
             new_marker = {
                 'id': marker_id,
@@ -1073,17 +1036,6 @@ class Viewport(QWidget):
         else:
             self.marker_mode = 'idle'
 
-
-    # def set_pending_marker_mode(self, _pending):
-    #     self.pending_point_mode = _pending
-
-    # def marker_set_edit_mode(self, _editing):
-    #     """Can be called by external class to toggle edit_marker mode."""
-    #     if _editing:
-    #         self.marker_mode = 'edit'
-    #     else:
-    #         self.marker_mode = 'idle'
-
     # painting ---------------------------------------------------------------------------------------------------------
     def paint_remove_canvas_label(self, _label_id):
         """ Remove this label id from the list of labels that are allowed to be affected by painting."""
@@ -1113,47 +1065,6 @@ class Viewport(QWidget):
 
     def paint_blend_background_with_layer(self, bg_pct, layer_idx, layer_pct):
         pass
-    #     """
-    #     Blend the current slice of the background image with the current slice of the image specified by layer_idx.
-    #     The alpha values are used to generate a weighted sum, thus resulting in an "alpha blended" image.
-    #
-    #     :param bg_pct: float (0.0 - 1.0)
-    #     :param layer_idx: index of the volume to blend with the background
-    #     :param layer_pct: float (0.0 - 1.0)
-    #     :return: 2D numpy array
-    #     """
-    #     background_image = self.image3D_obj_stack[0]
-    #     background_data = self.array3D_stack[0]
-    #     background_slice = (background_data[int(self.image_view.currentIndex), :, :]).astype(np.int32)
-    #     background_cmap = pg.colormap.get(background_image.colormap_name)
-    #     background_rgb = background_cmap.map(background_slice)
-    #
-    #     layer_image = self.image3D_obj_stack[layer_idx]
-    #     layer_data = self.array3D_stack[layer_idx]
-    #     layer_slice = (layer_data[int(self.image_view.currentIndex), :, :]).astype(np.int32)
-    #     layer_cmap = pg.colormap.get(layer_image.colormap_name)
-    #     layer_rgb = layer_cmap.map(layer_slice)
-    #     layer_image_item = self.array2D_stack[layer_idx]
-    #
-    #     # normalize the slices to 0-255
-    #     # background_norm = ((background_slice - np.min(background_slice)) / (np.max(background_slice) - np.min(background_slice))) * 255
-    #     # layer_norm = ((layer_slice - np.min(layer_slice)) / (np.max(layer_slice) - np.min(layer_slice))) * 255
-    #     background_norm = ((background_slice - np.min(background_data)) / (np.max(background_data) - np.min(background_data))) * 255
-    #     layer_norm = ((layer_slice - np.min(layer_data)) / (np.max(layer_data) - np.min(layer_data))) * 255
-    #
-    #     # slices to colormap
-    #     background_rgb = background_cmap.map(background_norm, mode='byte')
-    #     layer_rgb = layer_cmap.map(layer_norm, mode='byte')
-    #
-    #     # blend
-    #     blended_slice = bg_pct * background_slice + layer_pct * layer_slice
-    #     # blended_slice = (bg_pct * background_rgb + layer_pct * layer_rgb).astype(np.uint8)
-    #
-    #     # self.image_view.clear()
-    #     layer_image_item.setImage(blended_slice)
-    #     # layer_image_item.setImage(background_rgb)
-    #     # self.image_view.show()
-    #     # self.refresh_preserve_extent()
 
     def refresh_preserve_extent(self):
         """
@@ -1200,8 +1111,6 @@ class Viewport(QWidget):
                     # this is the bottom image in the stack and will be set as the 3D background image item in the
                     # image view
                     im_data = self.array3D_stack[ind]  # the (optionally transposed) 3D array
-                    # self.is_user_histogram_interaction = False  # prevent the histogram from updating the image3D object
-                    # setImage causes the z-slider slot to be called, which resets the current slice index to 0
                     # disconnect the slot to prevent this from happening
                     try:
                         # disconnect the slot before making changes
@@ -1227,30 +1136,24 @@ class Viewport(QWidget):
 
                     main_image = self.image_view.getImageItem()
 
-                    # if im_obj.clipping:
-                    #     # "clip" the image data to the display range (make vals outside range transparent)
-                    #     lo = im_obj.display_min
-                    #     hi = im_obj.display_max
-                    #     dmin = im_obj.data_min
-                    #     dmax = im_obj.data_max
-                    #     # compute normalized indices into [0…255]
-                    #     lo_idx = np.clip(((lo - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
-                    #     hi_idx = np.clip(((hi - dmin) / (dmax - dmin) * 255).astype(int), 0, 255)
-                    #     lut = im_obj.colormap.getLookupTable(
-                    #         start=0.0,  # maps to cm position 0.0
-                    #         stop=1.0,  # maps to cm position 1.0
-                    #         nPts=256,
-                    #         alpha=True  # include the alpha channel
-                    #     )
-                    #     lut[:lo_idx, 3] = 0  # below min → transparent
-                    #     lut[hi_idx:, 3] = 0  # above max → transparent
-                    #     main_image.setLookupTable(lut)
-                    # else:
                     # Set the levels to prevent LUT rescaling based on the slice content
                     main_image.setLevels([im_obj.display_min, im_obj.display_max])
                     # apply the opacity of the Image3D object to the ImageItem
-                    main_image.setOpacity(im_obj.alpha)
-                    main_image.setColorMap(im_obj.colormap)
+                    main_image.setOpacity(im_obj.opacity)
+                    if isinstance(im_obj.lut, np.ndarray):
+                        main_image.setLookupTable(im_obj.lut)  # LUT path (discrete or continuous)
+                    else:
+                        # optional fallback if you ever store names for continuous:
+                        if getattr(im_obj, "colormap_kind", None) == "continuous" and isinstance(im_obj.colormap_source,
+                                                                                                 str):
+                            lut = getattr(im_obj, "lut", None)
+                            if isinstance(lut, np.ndarray):
+                                main_image.setLookupTable(lut)  # works for discrete & continuous
+                            else:
+                                name = getattr(im_obj, "colormap_source", None)
+                                if isinstance(name, str):
+                                    # optional: try name only if you know pyqtgraph has it
+                                    main_image.setColorMap(name)
 
                     # FIXME: correct? # radiological convention = RAS+ notation
                     #  (where patient is HFS??, ie, patient right is on the left of the screen, and patient posterior
@@ -1427,15 +1330,6 @@ class Viewport(QWidget):
 
         self._update_markers_display()
 
-        # # update coordinates to reflect the current slice (so it updates without needing to move the mouse)
-        # coordinates_text = self.coordinates_label.text()
-        # if len(coordinates_text) > 0:
-        #     pattern = r"x=\s*\d+,\s*y=\s*\d+,\s*z=\s*(\d+)"
-        #     new_z = self.image_view.currentIndex
-        #     # substitute the new z value
-        #     new_string = re.sub(pattern, lambda m: m.group(0).replace(m.group(1), f"{new_z:3d}"), coordinates_text)
-        #     self.coordinates_label.setText(new_string)
-
     def _update_overlay_slice(self, layer_index):
         """
         Update the overlay image with the current slice from the overlay data. If layer_index is out of bounds of the
@@ -1458,97 +1352,30 @@ class Viewport(QWidget):
         overlay_slice = overlay_data[idx, :, :]
         image_item.setImage(overlay_slice)
 
-        # Clipping / levels
-        if getattr(overlay_image_object, "clipping", False):
-            # "clip" the image data to the display range (make vals outside range transparent)
-            lo = overlay_image_object.display_min
-            hi = overlay_image_object.display_max
-            dmin = overlay_image_object.data_min
-            dmax = overlay_image_object.data_max
-
-            # Avoid divide-by-zero
-            rng = (dmax - dmin) if (dmax > dmin) else 1.0
-
-            # Compute normalized indices into [0..255]
-            lo_idx = int(np.clip(((lo - dmin) / rng) * 255.0, 0, 255))
-            hi_idx = int(np.clip(((hi - dmin) / rng) * 255.0, 0, 255))
-
-            lut = overlay_image_object.colormap.getLookupTable(
-                start=0.0, stop=1.0, nPts=256, alpha=True
-            )
-            # Below min → transparent; above max → transparent
-            lut[:lo_idx, 3] = 0
-            lut[hi_idx:, 3] = 0
-
-            # Scale remaining alpha by overall layer alpha
-            lut[:, 3] = (lut[:, 3].astype(float) * overlay_image_object.alpha).astype(np.uint8)
-
-            image_item.setLookupTable(lut)
+        #  levels and opacity
+        # Fixed levels prevent per-slice LUT rescaling
+        image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
+        image_item.setOpacity(overlay_image_object.opacity)
+        # image_item.setColorMap(overlay_image_object.lut)
+        if isinstance(overlay_image_object.lut, np.ndarray):
+            image_item.setLookupTable(overlay_image_object.lut)
         else:
-            # Fixed levels prevent per-slice LUT rescaling
-            image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
-            image_item.setOpacity(overlay_image_object.alpha)
-            image_item.setColorMap(overlay_image_object.colormap)
-
-    def _update_opacity(self, value):
-        """Update the opacity of the active imageItem as well as the Image3D object."""
-        if self.image_view.getImageItem() is None:
-            return
-        # if self.active_image_index is None:
-        #     # TODO: raise an error or warning - no layer selected
-        #     return
-        opacity_value = value / 100  # convert slider value to a range of 0.0 - 1.0
-        if self.active_image_index == 0:
-            self.image_view.getImageItem().setOpacity(opacity_value)
-            self.image3D_obj_stack[0].alpha = opacity_value
-        else:
-            self.array2D_stack[self.active_image_index].setOpacity(opacity_value)
-            self.image3D_obj_stack[self.active_image_index].alpha = opacity_value
+            if getattr(overlay_image_object, "colormap_kind", None) == "continuous" and isinstance(
+                    overlay_image_object.colormap_source, str):
+                lut = getattr(overlay_image_object, "lut", None)
+                if isinstance(lut, np.ndarray):
+                    image_item.setLookupTable(lut)  # works for discrete & continuous
+                else:
+                    name = getattr(im_obj, "colormap_source", None)
+                    if isinstance(name, str):
+                        # optional: try name only if you know pyqtgraph has it
+                        image_item.setColorMap(name)
 
     def _update_image_object(self):
         """Update the display min and max of the active Image3D object.
         This is the slot for the signal emitted when the user interacts with the histogram widget.
         The histogram widget automatically updates the imageItem, so we also need to update the Image3D object."""
         pass
-        # if self.is_user_histogram_interaction:
-        #     # only do this if the user has interacted with the histogram. Not when the histogram is programmatically
-        #     # updated by another method.
-        #     if self.active_image_index is None:
-        #         # TODO: raise an error or warning - no layer selected
-        #         return
-        #     levels = self.image_view.getHistogramWidget().getLevels()
-        #     self.image3D_obj_stack[self.active_image_index].display_min = levels[0]
-        #     self.image3D_obj_stack[self.active_image_index].display_max = levels[1]
-        # # TODO: update Image3D colormap, too?
-
-    # def _reapply_lut(self):
-    #     # ensure the LUT remains as you defined it
-    #     found_bottom_image = False
-    #     for ind, im in enumerate(self.image3D_obj_stack):
-    #         if im is None:
-    #             continue
-    #         else:
-    #             if not found_bottom_image:
-    #                 found_bottom_image = True
-    #                 if im.lookup_table is not None:
-    #                     self.image_view.getImageItem().setLookupTable(im.lookup_table)
-    #             else:
-    #                 if self.array2D_stack[ind] is not None:
-    #                     self.array2D_stack[ind].setLookupTable(im.lookup_table)
-    #
-    # def _toggle_histogram(self):
-    #     """toggle the visibility of the histogram/colormap/opacity widget"""
-    #     histogram = self.image_view.getHistogramWidget()
-    #     is_visible = histogram.isVisible()
-    #     histogram.setVisible(not is_visible)
-    #     # if self.active_image_index is None:
-    #     #     return
-    #     # if self.image3D_obj_stack[self.active_image_index] is not None:
-    #     #     self.image_view.getImageItem().setLookupTable(self.image3D_obj_stack[self.active_image_index].colormap)
-    #     # self.image_view.updateImage()
-    #
-    #     # self._set_histogram_colormap(self.image3D_obj_stack[self.active_image_index].colormap)
-    #     self.opacity_slider.setVisible(not is_visible)
 
     def _profile_method(self, method, *args, **kwargs):
         profiler = cProfile.Profile()
@@ -1816,79 +1643,6 @@ class Viewport(QWidget):
         # pass event back to pyqtgraph for any further processing
         self.original_mouse_release(event)
 
-    # def _update_canvas(self):
-    #     """Update the canvas for painting. Masks the painting area using allowed values."""
-    #     if self.image3D_obj_stack[self.canvas_layer_index] is None or self.array3D_stack[
-    #         self.canvas_layer_index] is None:
-    #         # FIXME: raise an error or warning?
-    #         return
-    #
-    #     if not self.is_painting:
-    #         # TODO APPLY the mask to the paint image
-    #         self.imageItem2D_canvas.clear()
-    #
-    #     # mask the paint image to create a canvas for painting
-    #     paint_image_object = self.image3D_obj_stack[self.canvas_layer_index]
-    #     if hasattr(paint_image_object, 'get_canvas_labels'):
-    #         allowed_values = np.array(paint_image_object.get_canvas_labels())  # , dtype=canvas_slice.dtype.type
-    #         if allowed_values is None:
-    #             return
-    #         # paint_value = self.paint_brush.get_value()  # Value to paint with
-    #         paint_value = self.paint_brush.get_value()  # canvas_slice.dtype.type(
-    #
-    #         # get the current slice of the paint image
-    #         if self.canvas_layer_index == self.background_image_index:
-    #             paint_image_slice = self.image_view.getImageItem().image
-    #         else:
-    #             paint_image_slice = self.array2D_stack[self.canvas_layer_index].image
-    #
-    #         colors = [
-    #             (255, 255, 255, 0),  # white for 0
-    #             (255, 0, 0, 255),  # red for 1
-    #             (0, 255, 0, 255),  # green for 2
-    #             (0, 0, 255, 255),  # blue for 3
-    #             (255, 255, 0, 255)  # yellow for 4
-    #         ]
-    #
-    #         # masked canvas: 0 where paint is allowed, -1 * paint_value where it’s not allowed
-    #         temp_mask = np.where(np.isin(paint_image_slice, allowed_values), 0, (-1 * paint_value))
-    #         self.imageItem2D_canvas.setImage(temp_mask)
-    #         # mask_lookup_table = paint_image_object.colormap
-    #         # # self.imageItem2D_canvas.setLookupTable(mask_lookup_table)
-    #         color_map = pg.ColorMap(pos=np.linspace(0, 1, 5), color=colors)
-    #         self.imageItem2D_canvas.setColorMap(color_map)
-    #         self.imageItem2D_canvas.setDrawKernel(self.paint_brush.kernel, mask=None, center=self.paint_brush.center,
-    #                                               mode='add')
-    #
-    #         # FIXME: here, we need to fiddle with the colormap to make all but the paint_value transparent
-    #         # color_map = pg.ColorMap(pos=np.linspace(0, 1, 9), color=canvas_image_object.colormap)
-    #         # self.imageItem2D_canvas.setColorMap(color_map)
-    #
-    #         # self.imageItem2D_canvas.setDrawKernel(self.paint_brush.kernel, mask=None, center=self.paint_brush.center,
-    #         #                                    mode='add')
-
-
-    # def _enable_paint_brush(self, which_layer):
-    #     """Enable or refresh the paint brush on the specified layer."""
-    #     if self.image3D_obj_stack[which_layer] is None or self.array3D_stack[which_layer] is None:
-    #         return
-    #     if which_layer == self.background_image_index:
-    #         canvas_image = self.image_view.imageItem
-    #     else:
-    #         canvas_image = self.array2D_stack[which_layer]
-    #
-    #     self.canvas_layer_index = which_layer
-    #     self._update_canvas()
-    #
-    # def _disable_paint_brush(self, which_layer):
-    #     if self.image3D_obj_stack[which_layer] is None:
-    #         return
-    #     if which_layer == self.background_image_index:
-    #         self.image_view.imageItem.setDrawKernel(None)
-    #     else:
-    #         self.array2D_stack[which_layer].setDrawKernel(None)
-    #     # TODO: save the painted data to the Image3D object
-
     def _apply_brush(self, x, y, painting):
         """
         :param x:
@@ -1947,15 +1701,6 @@ class Viewport(QWidget):
             self.array2D_stack[self.canvas_layer_index].setImage(data_slice)
         self.image_view.view.setRange(xRange=view_range[0], yRange=view_range[1],
                                       padding=0)
-        # try:
-        #     # disconnect the slot before making changes
-        #     self.image_view.timeLine.sigPositionChanged.disconnect(self._slice_changed)
-        # except TypeError:
-        #     # if the slot was not connected, ignore the error
-        #     pass
-        # self.image_view.setCurrentIndex(self.current_slice_index)  # preserve the current slice
-        # # reconnect the slot
-        # self.image_view.timeLine.sigPositionChanged.connect(self._slice_changed)
 
     def _update_markers_display(self):
         """
@@ -1993,4 +1738,3 @@ class Viewport(QWidget):
             self.scatter.setData(spots=spots)
         else:
             self.scatter.clear()
-
