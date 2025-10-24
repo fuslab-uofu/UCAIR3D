@@ -304,11 +304,11 @@ class Histogram(QtWidgets.QFrame):
         self._is_float_mode = bool(enabled)
         self._stacked_sliders.setCurrentIndex(1 if enabled else 0)
         self._slider = self._current_slider()
-        # carry over range & values to the newly active slider
-        lo, hi = self.get_values()
-        rlo, rhi = self.get_range()
-        self.set_range(rlo, rhi)
-        self.set_values(lo, hi)
+        # # carry over range & values to the newly active slider
+        # lo, hi = self.get_values()
+        # rlo, rhi = self.get_range()
+        # self.set_range(rlo, rhi)
+        # self.set_values(lo, hi)
 
     def set_range(self, min_val: Number, max_val: Number) -> None:
         """

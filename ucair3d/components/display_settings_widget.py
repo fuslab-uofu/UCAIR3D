@@ -123,6 +123,7 @@ class DisplaySettings(QtWidgets.QFrame):
         if is_discrete:
             # CHANGED: use labels + LUT from LMVolume
             self.histogram.setVisible(False)
+            self.discrete_color_widget.setVisible(True)
             self.discrete_color_widget.refresh(
                 getattr(self.active_image3D, "labels", None),
                 getattr(self.active_image3D, "colormap_lut", None)
@@ -141,6 +142,7 @@ class DisplaySettings(QtWidgets.QFrame):
 
             self._update_histogram_from_image(self.active_image3D)
             self.histogram.setVisible(True)
+            self.discrete_color_widget.setVisible(False)
             QtCore.QTimer.singleShot(0, self._refresh_stack_geometry)
 
     def clear_active_image(self):
