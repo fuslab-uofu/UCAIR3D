@@ -1,7 +1,5 @@
 import numpy as np
 import pyqtgraph as pg
-import re
-import shortuuid
 
 from PyQt5.QtWidgets import QVBoxLayout, QWidget, QHBoxLayout, QLabel, QFrame
 from PyQt5.QtGui import QFont, QPainter, QImage, QFontMetrics, QGuiApplication, QPixmap, QColor, QCursor
@@ -1111,6 +1109,13 @@ class Viewport(QWidget):
                     # this is the bottom image in the stack and will be set as the 3D background image item in the
                     # image view
                     im_data = self.array3D_stack[ind]  # the (optionally transposed) 3D array
+
+                    # if the Image3D object does not have display-related information, then set some defaults
+                    disp_min = getattr(im_obj, "display_min", im_obj.data_min)
+                    disp_max = getattr(im_obj, "display_max", im_obj.data_max)
+                    opacity = getattr(im_obj, "opacity", 1.0)
+                    lut = getattr(im_obj, "lut", None)
+
                     # disconnect the slot to prevent this from happening
                     try:
                         # disconnect the slot before making changes
@@ -1137,11 +1142,11 @@ class Viewport(QWidget):
                     main_image = self.image_view.getImageItem()
 
                     # Set the levels to prevent LUT rescaling based on the slice content
-                    main_image.setLevels([im_obj.display_min, im_obj.display_max])
+                    main_image.setLevels([disp_min, disp_max])
                     # apply the opacity of the Image3D object to the ImageItem
-                    main_image.setOpacity(im_obj.opacity)
-                    if isinstance(im_obj.lut, np.ndarray):
-                        main_image.setLookupTable(im_obj.lut)  # LUT path (discrete or continuous)
+                    main_image.setOpacity(opacity)
+                    if isinstance(lut, np.ndarray):
+                        main_image.setLookupTable(lut)  # LUT path (discrete or continuous)
                     else:
                         # optional fallback if you ever store names for continuous:
                         if getattr(im_obj, "colormap_kind", None) == "continuous" and isinstance(im_obj.colormap_source,
@@ -1353,12 +1358,17 @@ class Viewport(QWidget):
         image_item.setImage(overlay_slice)
 
         #  levels and opacity
+        # if the Image3D object does not have display-related information, then set some defaults
+        disp_min = getattr(overlay_image_object, "display_min", im_obj.data_min)
+        disp_max = getattr(overlay_image_object, "display_max", im_obj.data_max)
+        opacity = getattr(overlay_image_object, "opacity", 1.0)
+        lut = getattr(overlay_image_object, "lut", None)
+
         # Fixed levels prevent per-slice LUT rescaling
-        image_item.setLevels([overlay_image_object.display_min, overlay_image_object.display_max])
-        image_item.setOpacity(overlay_image_object.opacity)
-        # image_item.setColorMap(overlay_image_object.lut)
-        if isinstance(overlay_image_object.lut, np.ndarray):
-            image_item.setLookupTable(overlay_image_object.lut)
+        image_item.setLevels([disp_min, disp_max])
+        image_item.setOpacity(opacity)
+        if isinstance(lut, np.ndarray):
+            image_item.setLookupTable(lut)
         else:
             if getattr(overlay_image_object, "colormap_kind", None) == "continuous" and isinstance(
                     overlay_image_object.colormap_source, str):
