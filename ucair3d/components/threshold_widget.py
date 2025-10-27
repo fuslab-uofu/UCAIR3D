@@ -14,6 +14,7 @@ from matplotlib.figure import Figure
 
 from Ui_threshold_widget import Ui_ThresholdWidget
 from superqt import QRangeSlider, QDoubleRangeSlider
+from .platform_utils import get_platform_slider_stylesheet
 
 
 class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
@@ -55,17 +56,20 @@ class ThresholdWidget(QtWidgets.QWidget, Ui_ThresholdWidget):
         else:
             self.slider = QRangeSlider(Qt.Horizontal, self)
         # this is a workaround to make the slider look like the rest of the app
-        self.slider.setStyleSheet("""
-        QSlider {
-            background-color: none;
-        }
-        QSlider::add-page:vertical {
-            background: none;
-            border: none;
-        }
-        QRangeSlider {
-            qproperty-barColor: #005FB8;
-        }""")
+        #self.slider.setStyleSheet("""
+        #QSlider {
+        #    background-color: none;
+        #}
+        #QSlider::add-page:vertical {
+        #    background: none;
+        #    border: none;
+        #}
+        #QRangeSlider {
+        #    qproperty-barColor: #005FB8;
+        #}""")
+        # Apply platform-specific styling
+        platform_stylesheet = get_platform_slider_stylesheet()
+        self.slider.setStyleSheet(platform_stylesheet)
         self.ui.verticalLayout.insertWidget(2, self.slider)
         self.ui.verticalLayout.setContentsMargins(0, 0, 0, 0)
         self.slider.sliderReleased.connect(self.on_slider_released)

@@ -7,6 +7,7 @@ from .colormap_combo_widget import ColormapCombo
 from .discrete_colors_widget import DiscreteColors
 from .histogram_widget import Histogram
 from .image3D import Image3D
+from .platform_utils import get_platform_regular_slider_stylesheet
 
 import numpy as np
 import cmap
@@ -86,6 +87,10 @@ class DisplaySettings(QtWidgets.QFrame):
 
         # --- Opacity ---
         self.ui.opacity_slider.valueChanged.connect(self._handle_opacity_slider_changed)
+        
+        # Apply platform-specific styling to opacity slider
+        opacity_stylesheet = get_platform_regular_slider_stylesheet()
+        self.ui.opacity_slider.setStyleSheet(opacity_stylesheet)
 
         # Start in a cleared/disabled state until an image is set
         self.ui.curr_image_text.setText("(none)")
