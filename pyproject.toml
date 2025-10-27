@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ucair3d"
+version = "0.0.1a1"
+description = "3D medical image toolkit (widgets + helpers) for PyQtGraph"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Michelle Kline" }]
+dependencies = [
+  "numpy>=1.25",
+  "PyQt5>=5.15",
+  "pyqtgraph>=0.13",
+  "nibabel>=5.1",
+  "shortuuid>=1.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ucair3d*"]
