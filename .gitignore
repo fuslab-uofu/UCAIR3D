@@ -10,4 +10,4 @@ env/
 *.pptx
 build/
 dist/
-*.egg-info/*.egg-info/
+*.egg-info/
