@@ -1359,8 +1359,8 @@ class Viewport(QWidget):
 
         #  levels and opacity
         # if the Image3D object does not have display-related information, then set some defaults
-        disp_min = getattr(overlay_image_object, "display_min", im_obj.data_min)
-        disp_max = getattr(overlay_image_object, "display_max", im_obj.data_max)
+        disp_min = getattr(overlay_image_object, "display_min", overlay_image_object.data_min)
+        disp_max = getattr(overlay_image_object, "display_max", overlay_image_object.data_max)
         opacity = getattr(overlay_image_object, "opacity", 1.0)
         lut = getattr(overlay_image_object, "lut", None)
 
