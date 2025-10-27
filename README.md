@@ -2,7 +2,15 @@
 
 **Utah Center for Advanced Imaging Research (UCAIR) 3D Medical Image Toolkit**
 
-Python-based components for interactively displaying and manipulating 3D medical images.
+Python-based components for interactively displaying and manipulating 3D medical images.  
+
+Michelle Kline
+Utah Center for Advanced Imaging Research
+Department of Radiology and Imaging Sciences
+University of Utah
+michelle.kline@utah.edu
+2025
+
 
 ---
 
