@@ -8,3 +8,6 @@ env/
 *.pyc
 .idea/
 *.pptx
+build/
+dist/
+*.egg-info/*.egg-info/
