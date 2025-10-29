@@ -1028,11 +1028,28 @@ class Viewport(QWidget):
             self.markers_cleared_signal.emit(self.id)
 
     def marker_set_add_mode(self, _is_adding):
-        """Can be called by external class to toggle marker add mode."""
-        if _is_adding:
+        """Can be called by external class to toggle marker add mode.
+        Registered viewports (typically id >= 6) cannot enter adding mode.
+        """
+        # Prevent registered viewports (id >= 6) from entering adding mode
+        if self.id >= 6:
+            self.marker_mode = 'idle'  # Force idle mode for registered viewports
+        elif _is_adding:
             self.marker_mode = 'adding'
         else:
             self.marker_mode = 'idle'
+    
+    def marker_set_mode(self, mode):
+        """Can be called by external class to set marker mode directly.
+        Valid modes: 'idle', 'adding', 'dragging'
+        Registered viewports (typically id >= 6) cannot be set to 'adding' or 'dragging' mode.
+        """
+        if mode in ['idle', 'adding', 'dragging']:
+            # Prevent registered viewports (id >= 6) from entering adding or dragging mode
+            if self.id >= 6 and mode != 'idle':
+                self.marker_mode = 'idle'  # Force idle mode for registered viewports
+            else:
+                self.marker_mode = mode
 
     # painting ---------------------------------------------------------------------------------------------------------
     def paint_remove_canvas_label(self, _label_id):
@@ -1442,6 +1459,7 @@ class Viewport(QWidget):
         """
         When user clicks on a marker. If the marker is not already selected, select it. If the marker
         is already selected, allow it to be dragged to a new position.
+        Only allows dragging if marker_mode is already set to 'dragging' (edit mode).
 
         :param evt: the clicking on a marker event
         :param mkr: the marker that was clicked
@@ -1453,7 +1471,12 @@ class Viewport(QWidget):
                 if not mkr.get('is_selected'):
                     self.marker_select(mkr, True)
 
-                self.marker_mode = 'dragging'
+                # Only allow dragging if marker_mode is already set to 'dragging' (edit mode)
+                if self.marker_mode == 'dragging':
+                    self.marker_mode = 'dragging'  # Keep it in dragging mode
+                else:
+                    # Don't allow dragging if not in edit mode
+                    return
 
     def _mouse_press_wrapper(self, event):
         self._profile_method(self._mouse_press, event)
@@ -1483,7 +1506,11 @@ class Viewport(QWidget):
                 handled = True
             # markers
             elif self.mark_im is not None and self.mark_im.matches_event(event):
-                if self.marker_mode == 'adding':
+                # Prevent marker creation in registered viewports (typically id >= 6 in LandMarker)
+                # This is a safety check - LandMarker should also prevent setting marker_mode to 'adding'
+                if self.id >= 6:
+                    handled = False  # Don't create markers in registered viewports
+                elif self.marker_mode == 'adding':
                     plot_x = int(plot_xy.x())
                     plot_y = int(plot_xy.y())
                     plot_data_crs = self.plotxyz_to_plotdatacrs(plot_x, plot_y, self.current_slice_index)
