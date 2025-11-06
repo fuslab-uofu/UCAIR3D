@@ -158,25 +158,27 @@ class CustomScatterPlotItem(pg.ScatterPlotItem):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.mouse_press_callback = None
-        self.mouse_release_callback = None
+        self.mouse_click_callback = None
+        self._press_pos = None  # Track where press occurred for click detection
+        self._press_point_data = None  # Track which point was pressed
         # self.current_point = None  # Track the currently selected marker
 
     def set_mouse_press_callback(self, callback):
         self.mouse_press_callback = callback
 
-    def set_mouse_release_callback(self, callback):
-        self.mouse_release_callback = callback
+    def set_mouse_click_callback(self, callback):
+        self.mouse_click_callback = callback
 
     def mousePressEvent(self, event):
         # find the spot that was pressed and pass it to custom callback
         clicked_spots = self.pointsAt(event.pos())
-        # if clicked_spots:
         if len(clicked_spots) > 0:
             clicked_spot = clicked_spots[0]  # Assume only one point is clicked
             point_data = clicked_spot.data()  # Access the metadata for the point
 
-            # # DEBUG:
-            # print(f"CustomScatterPlotItem:_mousePressEvent: {point_data} at position {clicked_spot.pos()}")
+            # Store press position and point for click detection
+            self._press_pos = event.pos()
+            self._press_point_data = point_data
 
             # call the custom callback if provided
             if self.mouse_press_callback:
@@ -184,11 +186,29 @@ class CustomScatterPlotItem(pg.ScatterPlotItem):
             else:
                 # Preserve default behavior
                 super().mousePressEvent(event)
+        else:
+            self._press_pos = None
+            self._press_point_data = None
+            super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self.mouse_release_callback:
-            self.mouse_release_callback(event)
-        super().mouseReleaseEvent(event)  # Ensure default behavior is preserved
+        # Check if this was a click (press and release at same location)
+        if self._press_pos is not None and self._press_point_data is not None:
+            # Check if release position is close to press position (within click threshold)
+            release_pos = event.pos()
+            if self._press_pos is not None:
+                delta = (release_pos - self._press_pos).manhattanLength()
+                # Qt's default click threshold is typically around 4-6 pixels
+                if delta <= 6 and self.mouse_click_callback:
+                    # This was a click - call the click callback
+                    # Create a synthetic event for the callback
+                    self.mouse_click_callback(event, self._press_point_data)
+            
+            # Clear press tracking
+            self._press_pos = None
+            self._press_point_data = None
+        
+        super().mouseReleaseEvent(event)
 
 
 class Viewport(QWidget):
@@ -199,6 +219,17 @@ class Viewport(QWidget):
     The calling class must also provide the maximum number of image allowed in the stack.
     A viewport is a subclass of QWidget and can be added to a layout in a QMainWindow.
     """
+    # Marker colors - easily modifiable for development
+    # Colors are RGBA tuples: (R, G, B, Alpha) with values 0-255
+    IDLE_MARKER_COLOR = (255, 0, 0, 255)      # red - unselected markers (fill)
+    SELECTED_MARKER_COLOR = (0, 255, 0, 255)  #  (50, 130, 246, 255)  # blue - selected markers (fill)
+    EDITING_MARKER_COLOR = (0, 255, 0, 255)   # green - selected markers in edit mode (fill, draggable)
+    
+    # Marker outline colors - can be different from fill colors
+    IDLE_MARKER_OUTLINE_COLOR = (255, 0, 0, 255)        # red - unselected markers (outline)
+    SELECTED_MARKER_OUTLINE_COLOR = (255, 0, 0, 255)  # green - selected markers (outline)
+    EDITING_MARKER_OUTLINE_COLOR = (0, 255, 0, 255)   # green - selected markers in edit mode (outline)
+    
     # signals to notify parent class of changes in the viewport
     marker_added_signal = pyqtSignal(object, object)
     marker_selected_signal = pyqtSignal(object, object, object)
@@ -235,19 +266,26 @@ class Viewport(QWidget):
         self.interaction_state = None  # implemented values: 'painting', 'erasing'
 
         # interactive point placement
-        self.marker_mode = 'idle' # 'idle', 'adding', 'dragging'
+        self.marker_mode = 'idle' # 'idle', 'adding', 'dragging', 'editing'
+        self._selection_locked = False  # Prevent deselection while adding/editing markers (until Done is clicked)
+        self._edit_mode = False  # Track if we're in edit mode (allows dragging)
         self.marker_moved = False
         self.selected_marker = None
         self._marker_counter = 0
-        # default colors for points TODO: let parent class update these
-        self.idle_marker_color = (255, 0, 0, 255)  # red
-        self.selected_marker_color = (0, 255, 0, 255)  # green
-        self.temp_marker_color = (255, 255, 0, 255) # yellow
-        self.idle_pen = pg.mkPen(self.idle_marker_color, width=1)  # red pen for not idle points
+        self._edit_start_position = None  # Store original position when entering edit mode
+        # Marker colors - use class variables (can be overridden per instance if needed)
+        self.idle_marker_color = self.IDLE_MARKER_COLOR
+        self.selected_marker_color = self.SELECTED_MARKER_COLOR
+        self.temp_marker_color = self.EDITING_MARKER_COLOR
+        self.idle_marker_outline_color = self.IDLE_MARKER_OUTLINE_COLOR
+        self.selected_marker_outline_color = self.SELECTED_MARKER_OUTLINE_COLOR
+        self.temp_marker_outline_color = self.EDITING_MARKER_OUTLINE_COLOR
+        # Pens use outline colors, brushes use fill colors
+        self.idle_pen = pg.mkPen(self.idle_marker_outline_color, width=1)
         self.idle_brush = pg.mkBrush(self.idle_marker_color)
-        self.selected_pen = pg.mkPen(self.selected_marker_color, width=2)  # green pen for selected point
+        self.selected_pen = pg.mkPen(self.selected_marker_outline_color, width=2)
         self.selected_brush = pg.mkBrush(self.selected_marker_color)
-        self.temp_pen = pg.mkPen(self.temp_marker_color, width=1)  # yellow pen for temporary point
+        self.temp_pen = pg.mkPen(self.temp_marker_outline_color, width=1)
         self.temp_brush = pg.mkBrush(self.temp_marker_color)
         # dictionary to store points for each slice
         self.slice_markers = {}
@@ -283,17 +321,26 @@ class Viewport(QWidget):
         self.coordinates_label = QLabel("", self)
         font = QFont("Courier New", 8)  # use a monospaced font for better alignment
         self.coordinates_label.setFont(font)
+        # Enable word wrap so the label can display multiple lines
+        self.coordinates_label.setWordWrap(False)  # We'll use explicit newlines
         # one‑decimal world format; this string defines the numeric field width
         world_sample = "-000.0"  # ← change this once if you ever need wider fields
         self._world_prec = 1
         self._world_field_width = len(world_sample)
         self._vox_field_width = 3
-        # choose letters for the sample (RAS or xyz doesn’t change total width)
+        # choose letters for the sample (RAS or xyz doesn't change total width)
         axis_labels = ("R", "A", "S") if self.display_convention.upper() == "RAS" else ("x", "y", "z")
-        sample = f"col:000 row:000 slice:000  |  {axis_labels[0]}:{world_sample} {axis_labels[1]}:{world_sample} {axis_labels[2]}:{world_sample}"
+        # Calculate width based on the longer line (world coordinates line)
+        world_sample_line = f"{axis_labels[0]}:{world_sample} {axis_labels[1]}:{world_sample} {axis_labels[2]}:{world_sample}"
+        vox_sample_line = f"col:000 row:000 slice:000"
         metrics = QFontMetrics(self.coordinates_label.font())
-        width = getattr(metrics, "horizontalAdvance", metrics.width)(sample)
+        world_width = getattr(metrics, "horizontalAdvance", metrics.width)(world_sample_line)
+        vox_width = getattr(metrics, "horizontalAdvance", metrics.width)(vox_sample_line)
+        # Use the wider of the two lines, and set height for two lines
+        width = max(world_width, vox_width)
+        line_height = metrics.height()
         self.coordinates_label.setFixedWidth(width)
+        self.coordinates_label.setFixedHeight(line_height * 2)  # Two lines
         # initialize with blanks
         self._set_coords_label(None, None, 0, None)
         coords_frame.layout().addWidget(self.coordinates_label)
@@ -401,9 +448,10 @@ class Viewport(QWidget):
         self.imageItem2D_canvas = pg.ImageItem()
         self.image_view.view.addItem(self.imageItem2D_canvas)
 
-        # this is the plot item for creating points. Customized to capture mouse press and mouse release events
+        # this is the plot item for creating points. Customized to capture mouse press and mouse click events
         self.scatter = CustomScatterPlotItem()
         self.scatter.set_mouse_press_callback(self._scatter_mouse_press)
+        self.scatter.set_mouse_click_callback(self._scatter_mouse_click)
         self.image_view.getView().addItem(self.scatter)
 
 
@@ -1009,15 +1057,42 @@ class Viewport(QWidget):
         self.slice_markers = {}
         self._update_markers_display()
 
+    def marker_sync_counter(self):
+        """
+        Update _marker_counter to be higher than any existing marker ID.
+        This ensures that new markers created after loading landmarks won't conflict with existing IDs.
+        Marker IDs are in the format: "MK_{self.id}_{counter}"
+        """
+        max_counter = 0
+        for slice_idx, markers in self.slice_markers.items():
+            for marker in markers:
+                marker_id = marker.get('id', '')
+                # Parse marker ID format: "MK_{vp_id}_{counter}"
+                if marker_id.startswith(f"MK_{self.id}_"):
+                    try:
+                        counter_str = marker_id.split('_')[-1]
+                        counter = int(counter_str)
+                        max_counter = max(max_counter, counter)
+                    except (ValueError, IndexError):
+                        # If parsing fails, ignore this marker ID
+                        pass
+        # Set counter to max found + 1, or keep current if it's already higher
+        self._marker_counter = max(self._marker_counter, max_counter)
+
     def marker_clear_selected(self, notify=True):
         """
         Sets all points in this viewport to unselected.
+        Respects _selection_locked flag to prevent clearing during add mode.
 
         :return:
         """
 
         # if self.parent.debug_mode:  # print debug messages
         #     print(f"marker_clear_selected() for viewport {self.id}")
+
+        # Don't clear selection if it's locked (during add mode until Done)
+        if self._selection_locked:
+            return
 
         for slice_idx, points in self.slice_markers.items():
             for pt in points:
@@ -1031,8 +1106,56 @@ class Viewport(QWidget):
         """Can be called by external class to toggle marker add mode."""
         if _is_adding:
             self.marker_mode = 'adding'
+            self._edit_mode = False  # Exit edit mode when entering add mode
+            # Don't lock selection yet - allow clearing when entering add mode
+            # Selection will be locked after a marker is actually added
+            self._selection_locked = False
         else:
+            self._selection_locked = False  # Unlock selection first, before clearing
             self.marker_mode = 'idle'
+            self._edit_mode = False
+
+    def marker_set_edit_mode(self, _is_editing, restore_position=False):
+        """
+        Can be called by external class to toggle marker edit mode.
+        
+        :param _is_editing: bool - True to enter edit mode, False to exit
+        :param restore_position: bool - If True when exiting edit mode, restore marker to original position (for Cancel)
+        """
+        if _is_editing:
+            self._edit_mode = True
+            # Lock selection while editing (similar to add mode)
+            self._selection_locked = True
+            # Save the current position of the selected marker for potential restore on cancel
+            if self.selected_marker is not None:
+                self._edit_start_position = {
+                    'image_col': self.selected_marker['image_col'],
+                    'image_row': self.selected_marker['image_row'],
+                    'image_slice': self.selected_marker['image_slice']
+                }
+            # Don't change marker_mode here - it stays as 'idle' until dragging starts
+            # Update marker display immediately to show editing color
+            self._update_markers_display()
+        else:
+            self._edit_mode = False
+            self._selection_locked = False  # Unlock selection when done editing
+            # Restore marker position if canceling (restore_position=True)
+            if restore_position and self._edit_start_position is not None and self.selected_marker is not None:
+                # Restore the original position
+                self.selected_marker['image_col'] = self._edit_start_position['image_col']
+                self.selected_marker['image_row'] = self._edit_start_position['image_row']
+                self.selected_marker['image_slice'] = self._edit_start_position['image_slice']
+                self._edit_start_position = None  # Clear saved position
+                # Update display to show restored position
+                self._update_markers_display()
+            else:
+                # Not restoring - clear saved position (Done was clicked, keep changes)
+                self._edit_start_position = None
+            if self.marker_mode == 'dragging':
+                self.marker_mode = 'idle'  # Exit dragging mode if we were dragging
+            # Update marker display immediately to show selected color (if still selected)
+            if not restore_position or self._edit_start_position is None:  # Only update if we didn't already update above
+                self._update_markers_display()
 
     # painting ---------------------------------------------------------------------------------------------------------
     def paint_remove_canvas_label(self, _label_id):
@@ -1259,6 +1382,7 @@ class Viewport(QWidget):
         """
         Update the coordinates label; keep field names, blank numbers if None.
         World fields use one decimal place and switch to R/A/S when display_convention == 'RAS'.
+        Displays on two lines: patient coordinates on top, voxel coordinates below.
         """
         vox_w = getattr(self, "_vox_field_width", 3)
         world_w = getattr(self, "_world_field_width", 8)  # derived from world_sample in __init__
@@ -1270,21 +1394,22 @@ class Viewport(QWidget):
         def fmt_float(v):
             return f"{float(v):>{world_w}.{prec}f}" if (v is not None) else " " * world_w
 
-        # image (voxel) coordinate labels
-        vox_txt = f"col:{fmt_int(col)} row:{fmt_int(row)} slice:{fmt_int(slc)}"
-
-        # world (patient) coordinate labels
+        # world (patient) coordinate labels - first line
         labels = ("x", "y", "z")
         if getattr(self, "display_convention", "").upper() == "RAS":
             labels = ("R", "A", "S")
         if world is not None and len(world) == 3:
             x, y, z = world
-            world_txt = f"  |  {labels[0]}:{fmt_float(x)} {labels[1]}:{fmt_float(y)} {labels[2]}:{fmt_float(z)}"
+            world_txt = f"{labels[0]}:{fmt_float(x)} {labels[1]}:{fmt_float(y)} {labels[2]}:{fmt_float(z)}"
         else:
             blank = " " * world_w
-            world_txt = f"  |  {labels[0]}:{blank} {labels[1]}:{blank} {labels[2]}:{blank}"
+            world_txt = f"{labels[0]}:{blank} {labels[1]}:{blank} {labels[2]}:{blank}"
 
-        self.coordinates_label.setText(vox_txt + world_txt)
+        # image (voxel) coordinate labels - second line
+        vox_txt = f"col:{fmt_int(col)} row:{fmt_int(row)} slice:{fmt_int(slc)}"
+
+        # Combine with newline: patient coordinates on top, voxel coordinates below
+        self.coordinates_label.setText(world_txt + "\n" + vox_txt)
 
     def _slice_changed(self):
         """Update current slice and overlays, update coordinates display."""
@@ -1376,7 +1501,7 @@ class Viewport(QWidget):
                 if isinstance(lut, np.ndarray):
                     image_item.setLookupTable(lut)  # works for discrete & continuous
                 else:
-                    name = getattr(im_obj, "colormap_source", None)
+                    name = getattr(overlay_image_object, "colormap_source", None)
                     if isinstance(name, str):
                         # optional: try name only if you know pyqtgraph has it
                         image_item.setColorMap(name)
@@ -1440,8 +1565,28 @@ class Viewport(QWidget):
 
     def _scatter_mouse_press(self, evt, mkr):
         """
-        When user clicks on a marker. If the marker is not already selected, select it. If the marker
-        is already selected, allow it to be dragged to a new position.
+        When user presses on a marker. If the marker is already selected and in edit mode, allow it to be dragged.
+        Selection of unselected markers happens in _scatter_mouse_click (on click, not press).
+
+        :param evt: the pressing on a marker event
+        :param mkr: the marker that was pressed
+        :return:
+        """
+        if self.mark_im is not None and self.mark_im.matches_event(evt):
+            # only respond to the event if the interaction method matches (for example, shift + left click)
+            if mkr is not None:
+                # If marker is already selected and in edit mode, can start dragging
+                if mkr.get('is_selected') and self._edit_mode:
+                    self.marker_mode = 'dragging'
+                
+                # Reset drag flag to track if marker was actually moved
+                self.marker_moved = False
+
+    def _scatter_mouse_click(self, evt, mkr):
+        """
+        When user clicks on a marker (press and release at same location).
+        If the marker is not already selected, select it now.
+        Respects _selection_locked to prevent selecting different markers during add mode.
 
         :param evt: the clicking on a marker event
         :param mkr: the marker that was clicked
@@ -1450,10 +1595,14 @@ class Viewport(QWidget):
         if self.mark_im is not None and self.mark_im.matches_event(evt):
             # only respond to the event if the interaction method matches (for example, shift + left click)
             if mkr is not None:
+                # If selection is locked, only allow clicking on the already-selected marker
+                if self._selection_locked:
+                    if not mkr.get('is_selected'):
+                        # Trying to select a different marker while locked - ignore
+                        return
+                # Select the marker if it's not already selected
                 if not mkr.get('is_selected'):
                     self.marker_select(mkr, True)
-
-                self.marker_mode = 'dragging'
 
     def _mouse_press_wrapper(self, event):
         self._profile_method(self._mouse_press, event)
@@ -1495,12 +1644,14 @@ class Viewport(QWidget):
                             if new_point is not None:
                                 self.marker_select(new_point, False)
                                 self.marker_mode = 'dragging'
+                                self._selection_locked = True  # Lock selection after adding marker (until Done)
                                 self._update_markers_display()
                                 self.marker_added_signal.emit(new_point, self.id)
                                 handled = True
                 else:
                     # clicked while not adding but still in marker interaction state → maybe deselect
-                    if len(self.scatter.pointsAt(plot_xy)) == 0:
+                    # Only deselect if selection is not locked (i.e., not in add mode)
+                    if len(self.scatter.pointsAt(plot_xy)) == 0 and not self._selection_locked:
                         self.marker_clear_selected()
                     # fall through to default PG handling
 
@@ -1736,10 +1887,23 @@ class Viewport(QWidget):
                 plot_xy = self.plotdatacr_to_plotxy(image_data_crs[0], image_data_crs[1])
                 if plot_xy is None:
                     continue
+                # Determine brush and pen colors based on marker state
+                if marker['is_selected']:
+                    if self._edit_mode:
+                        marker_brush = self.temp_brush  # editing color - draggable
+                        marker_pen = self.temp_pen
+                    else:
+                        marker_brush = self.selected_brush  # selected color
+                        marker_pen = self.selected_pen
+                else:
+                    marker_brush = self.idle_brush  # idle color - not selected
+                    marker_pen = self.idle_pen
+                
                 spots.append(
                     {
                         'pos': (plot_xy[0], plot_xy[1]), 'data': marker,
-                        'brush': self.selected_brush if marker['is_selected'] else self.idle_brush,
+                        'brush': marker_brush,
+                        'pen': marker_pen,
                     } )
 
             # FIXME: testing and debugging
