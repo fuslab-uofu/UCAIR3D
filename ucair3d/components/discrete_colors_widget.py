@@ -260,9 +260,8 @@ class DiscreteColors(QFrame):
             pct_label.setText(f'{val}%')
 
         new_alpha_255 = round(self.convert_range(val, 0, 100, 0, 255))
-        # self.colormap.getColors()[colormap_index] = [int(r), int(g), int(b), int(new_alpha_255)]
-        # self.colormap[colormap_index] = [int(r), int(g), int(b), int(new_alpha_255)]
-        self.lut[colormap_index] = [int(r), int(g), int(b), int(val)]
+        self.lut[colormap_index] = [int(r), int(g), int(b), int(new_alpha_255)]        
+        # self.lut[colormap_index] = [int(r), int(g), int(b), int(val)]
 
         # Emit fine-grained & aggregate signals
         alpha_0_1 = float(self.convert_range(val, 0, 100, 0.0, 1.0))
