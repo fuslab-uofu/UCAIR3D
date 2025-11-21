@@ -34,7 +34,7 @@ class Image3D:
 
     Public attributes:
         parent, file_type, full_file_name, file_path, file_name, file_base_name,
-        data, data_type, canonical_nifti, header,
+        data, data_type, canonical_nifti, header, original_nifti_header, original_nifti_affine,
         dx, dy, dz, num_rows, num_cols, num_slices, scan_direction,
         data_min, data_max, transform, x_dir, y_dir, z_dir,
         origin, resolution, shape, visible
@@ -73,6 +73,8 @@ class Image3D:
 
         # geometry & stats
         self.header = None
+        self.original_nifti_header = None  # header before canonicalization
+        self.original_nifti_affine = None  # affine matrix before canonicalization
         self.dx = 1.0
         self.dy = 1.0
         self.dz = 1.0
@@ -126,6 +128,10 @@ class Image3D:
         # as_closest_canonical() will flip and/or permute axes to match this convention.
         # The affine transform will be adjusted accordingly.
         # There is no resampling or data type conversion here; the original data type is preserved.
+
+        # Store original header and affine before canonicalization
+        self.original_nifti_header = nifti_image.header.copy()
+        self.original_nifti_affine = nifti_image.affine.copy()
 
         # TODO: support other conventions if needed
         # if convention == 'RAS':

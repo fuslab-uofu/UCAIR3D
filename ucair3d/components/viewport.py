@@ -222,12 +222,12 @@ class Viewport(QWidget):
     # Marker colors - easily modifiable for development
     # Colors are RGBA tuples: (R, G, B, Alpha) with values 0-255
     IDLE_MARKER_COLOR = (255, 0, 0, 255)      # red - unselected markers (fill)
-    SELECTED_MARKER_COLOR = (0, 255, 0, 255)  #  (50, 130, 246, 255)  # blue - selected markers (fill)
+    SELECTED_MARKER_COLOR = (255, 0, 0, 255)  #  (50, 130, 246, 255)  # blue - selected markers (fill)
     EDITING_MARKER_COLOR = (0, 255, 0, 255)   # green - selected markers in edit mode (fill, draggable)
     
     # Marker outline colors - can be different from fill colors
     IDLE_MARKER_OUTLINE_COLOR = (255, 0, 0, 255)        # red - unselected markers (outline)
-    SELECTED_MARKER_OUTLINE_COLOR = (255, 0, 0, 255)  # green - selected markers (outline)
+    SELECTED_MARKER_OUTLINE_COLOR = (0, 255, 0, 255)  # green - selected markers (outline)
     EDITING_MARKER_OUTLINE_COLOR = (0, 255, 0, 255)   # green - selected markers in edit mode (outline)
     
     # signals to notify parent class of changes in the viewport
