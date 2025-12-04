@@ -1187,17 +1187,24 @@ class Viewport(QWidget):
     def paint_blend_background_with_layer(self, bg_pct, layer_idx, layer_pct):
         pass
 
-    def refresh_preserve_extent(self):
+    def refresh_preserve_extent(self, use_blend_opacity=None):
         """
         Refresh the viewport without changing the current view extent.
+        
+        :param use_blend_opacity: If True, use blend_opacity instead of opacity for Image3D objects.
+                                  If None, uses the stored value from previous calls (defaults to False if never set).
         """
+        # If not explicitly provided, use stored value (for internal calls like _slice_changed)
+        if use_blend_opacity is None:
+            use_blend_opacity = getattr(self, '_use_blend_opacity', False)
+        
         # save the current view state (extent)
         view_box = self.image_view.getView()
         current_range = view_box.viewRange()  # [[x_min, x_max], [y_min, y_max]]
         # # FIXME: temp
         # print(f"current_range: {current_range}")
 
-        self.refresh()
+        self.refresh(use_blend_opacity=use_blend_opacity)
 
         # restore the view range
         view_box.setRange(
@@ -1209,11 +1216,15 @@ class Viewport(QWidget):
         # FIXME: temp
         # my_debug_stop = 24
 
-    def refresh(self):
+    def refresh(self, use_blend_opacity=False):
         """
         Should be called when one of the images displayed in the viewport changes. Sets the image item, and connects the
         histogram widget to the image item. Also updates the overlay images.
+        
+        :param use_blend_opacity: If True, use blend_opacity instead of opacity for Image3D objects
         """
+        # Store flag as instance variable for use in _update_overlays() which is called from _slice_changed()
+        self._use_blend_opacity = use_blend_opacity
 
         # if self.parent.debug_mode:  # print debug messages
         #     print(f"refresh() for viewport {self.id}")
@@ -1236,7 +1247,11 @@ class Viewport(QWidget):
                     # if the Image3D object does not have display-related information, then set some defaults
                     disp_min = getattr(im_obj, "display_min", im_obj.data_min)
                     disp_max = getattr(im_obj, "display_max", im_obj.data_max)
-                    opacity = getattr(im_obj, "opacity", 1.0)
+                    # Use blend_opacity if flag is set and attribute exists, otherwise use opacity
+                    if use_blend_opacity and hasattr(im_obj, "blend_opacity"):
+                        opacity = getattr(im_obj, "blend_opacity", 1.0)
+                    else:
+                        opacity = getattr(im_obj, "opacity", 1.0)
                     lut = getattr(im_obj, "lut", None)
 
                     # disconnect the slot to prevent this from happening
@@ -1296,7 +1311,7 @@ class Viewport(QWidget):
                     found_bottom_image = True
                 else:
                     # this is an overlay image, so we need to get a slice of it and set it as an overlay
-                    self._update_overlay_slice(ind)  # uses self.current_slice_index
+                    self._update_overlay_slice(ind, use_blend_opacity=use_blend_opacity)  # uses self.current_slice_index
 
                 # set the current slice index to the first slice of the background image
                 try:
@@ -1451,19 +1466,25 @@ class Viewport(QWidget):
             return
 
         # loop through images in the stack above the background image
+        # Note: _update_overlays() is called from _slice_changed(), which doesn't have use_blend_opacity context
+        # We'll use an instance variable to track this, or default to False for internal calls
+        use_blend_opacity = getattr(self, '_use_blend_opacity', False)
         for layer_index in range(self.background_image_index + 1, self.num_vols_allowed):
             if self.image3D_obj_stack[layer_index] is not None:
-                self._update_overlay_slice(layer_index)
+                self._update_overlay_slice(layer_index, use_blend_opacity=use_blend_opacity)
             else:
                 if self.array2D_stack[layer_index] is not None:
                     self.array2D_stack[layer_index].clear()
 
         self._update_markers_display()
 
-    def _update_overlay_slice(self, layer_index):
+    def _update_overlay_slice(self, layer_index, use_blend_opacity=False):
         """
         Update the overlay image with the current slice from the overlay data. If layer_index is out of bounds of the
         overlay, just return.
+        
+        :param layer_index: Index of the overlay layer to update
+        :param use_blend_opacity: If True, use blend_opacity instead of opacity for Image3D objects
         """
         if self.array3D_stack[layer_index] is None:
             return
@@ -1486,7 +1507,11 @@ class Viewport(QWidget):
         # if the Image3D object does not have display-related information, then set some defaults
         disp_min = getattr(overlay_image_object, "display_min", overlay_image_object.data_min)
         disp_max = getattr(overlay_image_object, "display_max", overlay_image_object.data_max)
-        opacity = getattr(overlay_image_object, "opacity", 1.0)
+        # Use blend_opacity if flag is set and attribute exists, otherwise use opacity
+        if use_blend_opacity and hasattr(overlay_image_object, "blend_opacity"):
+            opacity = getattr(overlay_image_object, "blend_opacity", 1.0)
+        else:
+            opacity = getattr(overlay_image_object, "opacity", 1.0)
         lut = getattr(overlay_image_object, "lut", None)
 
         # Fixed levels prevent per-slice LUT rescaling
