@@ -1068,14 +1068,14 @@ class Viewport(QWidget):
             for marker in markers:
                 marker_id = marker.get('id', '')
                 # Parse marker ID format: "MK_{vp_id}_{counter}"
-                if marker_id.startswith(f"MK_{self.id}_"):
-                    try:
-                        counter_str = marker_id.split('_')[-1]
-                        counter = int(counter_str)
-                        max_counter = max(max_counter, counter)
-                    except (ValueError, IndexError):
-                        # If parsing fails, ignore this marker ID
-                        pass
+                # if marker_id.startswith(f"MK_{self.id}_"):
+                #     try:
+                #         counter_str = marker_id.split('_')[-1]
+                #         counter = int(counter_str)
+                #         max_counter = max(max_counter, counter)
+                #     except (ValueError, IndexError):
+                #         # If parsing fails, ignore this marker ID
+                #         pass
         # Set counter to max found + 1, or keep current if it's already higher
         self._marker_counter = max(self._marker_counter, max_counter)
 
