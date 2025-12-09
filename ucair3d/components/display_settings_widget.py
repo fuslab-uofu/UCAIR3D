@@ -357,31 +357,50 @@ class DisplaySettings(QtWidgets.QFrame):
         self.discrete_color_widget.setEnabled(on)
 
     def _refresh_stack_geometry(self):
-        pass
-        # page = self._color_settings_stack.currentWidget()
-        # if not page:
-        #     return
-        # page.updateGeometry()
-        # page.adjustSize()
-        # h = page.sizeHint().height()
-        # self._color_settings_stack.setMinimumHeight(0)
-        # self._color_settings_stack.setMaximumHeight(16777215)
-        # self._color_settings_stack.setMinimumHeight(h)
-        # self._color_settings_stack.setMaximumHeight(h)
-        # self._color_settings_stack.updateGeometry()
-        #
-        # host = self.ui.color_settings_frame
-        # host.setSizePolicy(host.sizePolicy().horizontalPolicy(), QtWidgets.QSizePolicy.Fixed)
-        # host.setMinimumHeight(0)
-        # host.setMaximumHeight(16777215)
-        # host.setMinimumHeight(h)
-        # host.setMaximumHeight(h)
-        # host.updateGeometry()
-        #
-        # self.updateGeometry()
-        # p = self.parent()
-        # if hasattr(p, "updateGeometry"):
-        #     p.updateGeometry()
+        # if switching between discrete/continuous, the stacked area needs to resize to fit the new page
+        page = self._color_settings_stack.currentWidget()
+        if not page:
+            return
+        
+        # For discrete widget, calculate height based on visible rows instead of sizeHint()
+        # because sizeHint() doesn't account for dynamically shown/hidden rows
+        if page == self.discrete_color_widget:
+            # Force the scroll area widget contents to update its layout
+            scroll_area = page.findChild(QtWidgets.QScrollArea)
+            if scroll_area:
+                scroll_widget = scroll_area.widget()
+                if scroll_widget:
+                    scroll_widget.updateGeometry()
+                    scroll_widget.adjustSize()
+            # Also ensure the discrete widget itself updates
+            page.updateGeometry()
+            page.adjustSize()
+            # Get height from the discrete widget's content calculation
+            h = self.discrete_color_widget.get_content_height()
+            if h is None:
+                # Fallback to sizeHint if calculation fails
+                h = page.sizeHint().height()
+        else:
+            page.updateGeometry()
+            page.adjustSize()
+            h = page.sizeHint().height()
+        
+        # Set fixed height for the stack (both min and max set to same value)
+        self._color_settings_stack.setMinimumHeight(h)
+        self._color_settings_stack.setMaximumHeight(h)
+        self._color_settings_stack.updateGeometry()
+
+        # Set fixed height for the host frame
+        host = self.ui.color_settings_frame
+        host.setSizePolicy(host.sizePolicy().horizontalPolicy(), QtWidgets.QSizePolicy.Fixed)
+        host.setMinimumHeight(h)
+        host.setMaximumHeight(h)
+        host.updateGeometry()
+
+        self.updateGeometry()
+        p = self.parent()
+        if hasattr(p, "updateGeometry"):
+            p.updateGeometry()
 
     def _on_stack_changed(self, idx: int):
         self._refresh_stack_geometry()

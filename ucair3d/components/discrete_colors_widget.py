@@ -2,7 +2,7 @@
 """ Wrapper for custom discrete colors widget.
 Author: Michelle Kline
 """
-from PyQt5.QtWidgets import QFrame, QLabel, QPushButton, QColorDialog, QSlider
+from PyQt5.QtWidgets import QFrame, QLabel, QPushButton, QColorDialog, QSlider, QScrollArea, QGridLayout, QHBoxLayout
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtGui import QColor
 
@@ -165,6 +165,16 @@ class DiscreteColors(QFrame):
                 if alpha_label:
                     alpha_label.setText('')
                     alpha_label.setVisible(False)
+        
+        # Force layout update after showing/hiding widgets to ensure proper geometry calculation
+        scroll_area = self.findChild(QScrollArea)
+        if scroll_area:
+            scroll_widget = scroll_area.widget()
+            if scroll_widget:
+                scroll_widget.updateGeometry()
+                scroll_widget.adjustSize()
+        self.updateGeometry()
+        self.adjustSize()
 
     def clear(self):
         """
@@ -273,4 +283,86 @@ class DiscreteColors(QFrame):
 
     def convert_range(self, value, old_min, old_max, new_min, new_max):
         return ((value - old_min) * (new_max - new_min) / (old_max - old_min)) + new_min
+    
+    def get_content_height(self):
+        """
+        Calculate the actual height needed for the discrete colors widget based on visible rows.
+        Returns the height in pixels, or None if unable to calculate.
+        """
+        if not hasattr(self, 'lut') or self.lut is None:
+            return None
+        
+        # Get the scroll area and its contents
+        scroll_area = self.findChild(QScrollArea)
+        if not scroll_area:
+            return None
+        
+        scroll_widget = scroll_area.widget()
+        if not scroll_widget:
+            return None
+        
+        # Get the grid layout
+        grid_layout = scroll_widget.findChild(QGridLayout)
+        if not grid_layout:
+            return None
+        
+        # Force the layout to update and calculate its size hint
+        scroll_widget.updateGeometry()
+        scroll_widget.adjustSize()
+        grid_layout.invalidate()
+        grid_layout.activate()
+        
+        # Get the actual size hint of the scroll widget contents
+        scroll_content_height = scroll_widget.sizeHint().height()
+        if scroll_content_height <= 0:
+            # Fallback: count visible rows and estimate
+            visible_rows = 0
+            for i in range(self.NUM_UI_ROWS):
+                label_widget = self.findChild(QLabel, f'label_label_{i}')
+                if label_widget and label_widget.isVisible() and label_widget.text():
+                    visible_rows += 1
+            
+            if visible_rows == 0:
+                return None
+            
+            # Estimate: each row is ~25px (label height + spacing)
+            row_height = 25
+            margins = grid_layout.contentsMargins()
+            scroll_content_height = visible_rows * row_height + margins.top() + margins.bottom()
+        
+        # Get fixed heights of other elements in the main layout
+        fixed_elements_height = 0
+        
+        # Line separator (2px)
+        line = self.findChild(QFrame, 'line')
+        if line:
+            line_h = line.sizeHint().height()
+            fixed_elements_height += line_h if line_h > 0 else 2
+        
+        # "Overall Opacity" label
+        opacity_label = self.findChild(QLabel, 'label_4')
+        if opacity_label:
+            label_h = opacity_label.sizeHint().height()
+            fixed_elements_height += label_h if label_h > 0 else 24
+        
+        # Opacity slider layout
+        opacity_layout = self.findChild(QHBoxLayout, 'horizontalLayout')
+        if opacity_layout:
+            fixed_elements_height += opacity_layout.sizeHint().height() or 30
+        else:
+            fixed_elements_height += 30  # fallback
+        
+        # Get the main layout to account for margins and spacing
+        main_layout = self.layout()
+        if main_layout:
+            margins = main_layout.contentsMargins()
+            spacing = main_layout.spacing()
+            # Count spacing between elements (scroll area, line, label, slider)
+            layout_overhead = margins.top() + margins.bottom() + spacing * 3
+        else:
+            layout_overhead = 10  # fallback
+        
+        total_height = scroll_content_height + fixed_elements_height + layout_overhead
+        
+        return total_height
 

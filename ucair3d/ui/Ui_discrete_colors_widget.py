@@ -15,7 +15,7 @@ class Ui_DiscreteColorsWidget(object):
     def setupUi(self, DiscreteColorsWidget):
         DiscreteColorsWidget.setObjectName("DiscreteColorsWidget")
         DiscreteColorsWidget.resize(262, 299)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(DiscreteColorsWidget.sizePolicy().hasHeightForWidth())
@@ -30,7 +30,7 @@ class Ui_DiscreteColorsWidget(object):
         self.scrollArea.setWidgetResizable(True)
         self.scrollArea.setObjectName("scrollArea")
         self.scrollAreaWidgetContents = QtWidgets.QWidget()
-        self.scrollAreaWidgetContents.setGeometry(QtCore.QRect(0, 0, 247, 503))
+        self.scrollAreaWidgetContents.setGeometry(QtCore.QRect(0, -25, 247, 503))
         self.scrollAreaWidgetContents.setObjectName("scrollAreaWidgetContents")
         self.gridLayout = QtWidgets.QGridLayout(self.scrollAreaWidgetContents)
         self.gridLayout.setContentsMargins(2, 2, 2, 2)
