@@ -131,7 +131,7 @@ class DisplaySettings(QtWidgets.QFrame):
             self.discrete_color_widget.setVisible(True)
             self.discrete_color_widget.refresh(
                 getattr(self.active_image3D, "labels", None),
-                getattr(self.active_image3D, "colormap_lut", None)
+                getattr(self.active_image3D, "lut", None)
             )
             QtCore.QTimer.singleShot(0, self._refresh_stack_geometry)
         else:
@@ -357,30 +357,31 @@ class DisplaySettings(QtWidgets.QFrame):
         self.discrete_color_widget.setEnabled(on)
 
     def _refresh_stack_geometry(self):
-        page = self._color_settings_stack.currentWidget()
-        if not page:
-            return
-        page.updateGeometry()
-        page.adjustSize()
-        h = page.sizeHint().height()
-        self._color_settings_stack.setMinimumHeight(0)
-        self._color_settings_stack.setMaximumHeight(16777215)
-        self._color_settings_stack.setMinimumHeight(h)
-        self._color_settings_stack.setMaximumHeight(h)
-        self._color_settings_stack.updateGeometry()
-
-        host = self.ui.color_settings_frame
-        host.setSizePolicy(host.sizePolicy().horizontalPolicy(), QtWidgets.QSizePolicy.Fixed)
-        host.setMinimumHeight(0)
-        host.setMaximumHeight(16777215)
-        host.setMinimumHeight(h)
-        host.setMaximumHeight(h)
-        host.updateGeometry()
-
-        self.updateGeometry()
-        p = self.parent()
-        if hasattr(p, "updateGeometry"):
-            p.updateGeometry()
+        pass
+        # page = self._color_settings_stack.currentWidget()
+        # if not page:
+        #     return
+        # page.updateGeometry()
+        # page.adjustSize()
+        # h = page.sizeHint().height()
+        # self._color_settings_stack.setMinimumHeight(0)
+        # self._color_settings_stack.setMaximumHeight(16777215)
+        # self._color_settings_stack.setMinimumHeight(h)
+        # self._color_settings_stack.setMaximumHeight(h)
+        # self._color_settings_stack.updateGeometry()
+        #
+        # host = self.ui.color_settings_frame
+        # host.setSizePolicy(host.sizePolicy().horizontalPolicy(), QtWidgets.QSizePolicy.Fixed)
+        # host.setMinimumHeight(0)
+        # host.setMaximumHeight(16777215)
+        # host.setMinimumHeight(h)
+        # host.setMaximumHeight(h)
+        # host.updateGeometry()
+        #
+        # self.updateGeometry()
+        # p = self.parent()
+        # if hasattr(p, "updateGeometry"):
+        #     p.updateGeometry()
 
     def _on_stack_changed(self, idx: int):
         self._refresh_stack_geometry()
