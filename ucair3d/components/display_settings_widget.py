@@ -133,11 +133,14 @@ class DisplaySettings(QtWidgets.QFrame):
                 getattr(self.active_image3D, "labels", None),
                 getattr(self.active_image3D, "lut", None)
             )
+            # Force update/repaint before geometry refresh
+            self.discrete_color_widget.update()
+            self.discrete_color_widget.repaint()
             QtCore.QTimer.singleShot(0, self._refresh_stack_geometry)
         else:
             # --- Sync the combo box selection to this image's colormap name ---
             # CHANGED: name comes from LMVolume.colormap_source (string)
-            name = getattr(self.active_image3D, "colormap_source", None)
+            name = getattr(self.active_image3D, "colormap_name", None)
             if isinstance(name, str) and name:
                 self.colormap_combo.blockSignals(True)
                 try:
@@ -270,11 +273,10 @@ class DisplaySettings(QtWidgets.QFrame):
             # CHANGED: use LUT, not .colormap
             self.discrete_color_widget.refresh(
                 getattr(self.active_image3D, "labels", None),
-                getattr(self.active_image3D, "colormap_lut", None)
+                getattr(self.active_image3D, "lut", None)
             )
         else:
-            # CHANGED: select by name from LMVolume.colormap_source
-            name = getattr(self.active_image3D, "colormap_source", None)
+            name = getattr(self.active_image3D, "colormap_name", None)
             if isinstance(name, str) and name:
                 self.colormap_combo.blockSignals(True)
                 try:
@@ -368,13 +370,20 @@ class DisplaySettings(QtWidgets.QFrame):
             # Force the scroll area widget contents to update its layout
             scroll_area = page.findChild(QtWidgets.QScrollArea)
             if scroll_area:
+                scroll_area.setVisible(True)  # Ensure scroll area is visible
                 scroll_widget = scroll_area.widget()
                 if scroll_widget:
+                    scroll_widget.setVisible(True)  # Ensure scroll widget is visible
                     scroll_widget.updateGeometry()
                     scroll_widget.adjustSize()
+                    scroll_widget.update()  # Force repaint
+                scroll_area.updateGeometry()
+                scroll_area.update()  # Force repaint
             # Also ensure the discrete widget itself updates
+            page.setVisible(True)  # Ensure page is visible
             page.updateGeometry()
             page.adjustSize()
+            page.update()  # Force repaint
             # Get height from the discrete widget's content calculation
             h = self.discrete_color_widget.get_content_height()
             if h is None:
@@ -385,10 +394,15 @@ class DisplaySettings(QtWidgets.QFrame):
             page.adjustSize()
             h = page.sizeHint().height()
         
+        # Ensure minimum height to prevent widget from being hidden
+        if h is None or h <= 0:
+            h = 100  # Fallback minimum height
+        
         # Set fixed height for the stack (both min and max set to same value)
         self._color_settings_stack.setMinimumHeight(h)
         self._color_settings_stack.setMaximumHeight(h)
         self._color_settings_stack.updateGeometry()
+        self._color_settings_stack.update()  # Force repaint
 
         # Set fixed height for the host frame
         host = self.ui.color_settings_frame
@@ -396,11 +410,15 @@ class DisplaySettings(QtWidgets.QFrame):
         host.setMinimumHeight(h)
         host.setMaximumHeight(h)
         host.updateGeometry()
+        host.update()  # Force repaint
 
         self.updateGeometry()
+        self.update()  # Force repaint
         p = self.parent()
         if hasattr(p, "updateGeometry"):
             p.updateGeometry()
+            if hasattr(p, "update"):
+                p.update()  # Force parent repaint
 
     def _on_stack_changed(self, idx: int):
         self._refresh_stack_geometry()

@@ -138,33 +138,32 @@ class DiscreteColors(QFrame):
                 alpha_label.setText(f'{alpha_val}%')
                 alpha_label.setVisible(True)
 
-        # disable any unused rows
-        unfilled = len(self.lut) - len(_labels)  # includes background
-        if unfilled > 0:
-            for i in range(len(_labels), len(self.lut)):
-                color_button = self.findChild(QPushButton, f'label_button_{i}')
-                if color_button:
-                    color_button.setStyleSheet(
-                        f"""QPushButton#label_button_{i} {{
-                            background-color: #31363b;
-                            border: 0.04em solid #76797c;
-                        }}"""
-                    )
-                    color_button.setEnabled(False)
-                    color_button.setVisible(False)
+        # Hide any unused rows beyond the number of labels
+        # We need to hide from len(_labels) to NUM_UI_ROWS (not just to len(self.lut))
+        for i in range(len(_labels), self.NUM_UI_ROWS):
+            color_button = self.findChild(QPushButton, f'label_button_{i}')
+            if color_button:
+                color_button.setStyleSheet(
+                    f"""QPushButton#label_button_{i} {{
+                        background-color: #31363b;
+                        border: 0.04em solid #76797c;
+                    }}"""
+                )
+                color_button.setEnabled(False)
+                color_button.setVisible(False)
 
-                alpha_slider = self.findChild(QSlider, f'alpha_slider_{i}')
-                if alpha_slider:
-                    alpha_slider.setEnabled(False)
-                    alpha_slider.setVisible(False)
-                label_widget = self.findChild(QLabel, f'label_label_{i}')
-                if label_widget:
-                    label_widget.setText('')
-                    label_widget.setVisible(False)
-                alpha_label = self.findChild(QLabel, f'pct_label_{i}')
-                if alpha_label:
-                    alpha_label.setText('')
-                    alpha_label.setVisible(False)
+            alpha_slider = self.findChild(QSlider, f'alpha_slider_{i}')
+            if alpha_slider:
+                alpha_slider.setEnabled(False)
+                alpha_slider.setVisible(False)
+            label_widget = self.findChild(QLabel, f'label_label_{i}')
+            if label_widget:
+                label_widget.setText('')
+                label_widget.setVisible(False)
+            alpha_label = self.findChild(QLabel, f'pct_label_{i}')
+            if alpha_label:
+                alpha_label.setText('')
+                alpha_label.setVisible(False)
         
         # Force layout update after showing/hiding widgets to ensure proper geometry calculation
         scroll_area = self.findChild(QScrollArea)
@@ -173,8 +172,14 @@ class DiscreteColors(QFrame):
             if scroll_widget:
                 scroll_widget.updateGeometry()
                 scroll_widget.adjustSize()
+                scroll_widget.update()  # Force repaint
+            scroll_area.updateGeometry()
+            scroll_area.update()  # Force repaint
+            # Ensure scroll area is scrolled to the top to show the first rows
+            scroll_area.verticalScrollBar().setValue(0)
         self.updateGeometry()
         self.adjustSize()
+        self.update()  # Force repaint to ensure widgets are visible
 
     def clear(self):
         """
@@ -315,20 +320,17 @@ class DiscreteColors(QFrame):
         # Get the actual size hint of the scroll widget contents
         scroll_content_height = scroll_widget.sizeHint().height()
         if scroll_content_height <= 0:
-            # Fallback: count visible rows and estimate
-            visible_rows = 0
-            for i in range(self.NUM_UI_ROWS):
-                label_widget = self.findChild(QLabel, f'label_label_{i}')
-                if label_widget and label_widget.isVisible() and label_widget.text():
-                    visible_rows += 1
+            # Fallback: use LUT length to determine number of rows
+            # This is more reliable than counting visible widgets, which may not be visible yet
+            num_rows = len(self.lut) if self.lut is not None else 0
             
-            if visible_rows == 0:
+            if num_rows == 0:
                 return None
             
             # Estimate: each row is ~25px (label height + spacing)
             row_height = 25
             margins = grid_layout.contentsMargins()
-            scroll_content_height = visible_rows * row_height + margins.top() + margins.bottom()
+            scroll_content_height = num_rows * row_height + margins.top() + margins.bottom()
         
         # Get fixed heights of other elements in the main layout
         fixed_elements_height = 0

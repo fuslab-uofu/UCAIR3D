@@ -77,6 +77,9 @@
        <property name="verticalSpacing">
         <number>1</number>
        </property>
+       <property name="alignment">
+        <set>Qt::AlignTop</set>
+       </property>
        <item row="2" column="3">
         <widget class="QLabel" name="pct_label_1">
          <property name="font">

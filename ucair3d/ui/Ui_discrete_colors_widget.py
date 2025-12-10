@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'ui\discrete_colors_widget.ui'
+# Form implementation generated from reading ui file 'discrete_colors_widget.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.9
 #
@@ -33,6 +33,7 @@ class Ui_DiscreteColorsWidget(object):
         self.scrollAreaWidgetContents.setGeometry(QtCore.QRect(0, 0, 247, 503))
         self.scrollAreaWidgetContents.setObjectName("scrollAreaWidgetContents")
         self.gridLayout = QtWidgets.QGridLayout(self.scrollAreaWidgetContents)
+        self.gridLayout.setAlignment(QtCore.Qt.AlignTop)
         self.gridLayout.setContentsMargins(2, 2, 2, 2)
         self.gridLayout.setHorizontalSpacing(2)
         self.gridLayout.setVerticalSpacing(1)
